@@ -82,12 +82,6 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-6 p-4 bg-gray-50 rounded-2xl text-sm text-gray-600">
-            <p className="font-semibold text-gray-700 mb-2">Default admin:</p>
-            <code className="text-brand-600 font-mono">admin@lms.com</code>
-            <span className="mx-2 text-gray-400">/</span>
-            <code className="text-brand-600 font-mono">Admin@123</code>
-          </div>
         </div>
       </div>
     </div>
