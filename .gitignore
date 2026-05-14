@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Environment files
+.env
+.env.*
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+!.env.example
+!backend/.env.example
+!frontend/.env.example
+
+# Build output
+dist/
+build/
+frontend/dist/
+backend/dist/
+.vercel/
+
+# Logs and runtime output
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local/generated bundles and code dumps
+*.7z
+*_code.txt
+consolidated_*.txt
+full_project_code.txt
+project_tagged_code.txt
+frontend_pages.txt
+frontend/*_overview.txt
+frontend/analytics.txt
+frontend/app.txt
+frontend/router.txt
+frontend/structure.txt
+frontend/src/pages/trainer/consolidated_files.md
+backend/analytics.txt
+backend/structure.txt
+[{]backend/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
