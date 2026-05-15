@@ -90,6 +90,7 @@ export const lessonsAPI = {
 export const lessonProgressAPI = {
   complete: (data) => api.post('/lesson-progress/complete', data),
   updateWatch: (data) => api.put('/lesson-progress/watch', data),
+  getMy: () => api.get('/lesson-progress/my'),
   getByCourse: (courseId) => api.get(`/lesson-progress/course/${courseId}`),
   getTraineeCourse: (tid, cid) => api.get(`/lesson-progress/trainee/${tid}/course/${cid}`),
   getByModule: (moduleId) => api.get(`/lesson-progress/module/${moduleId}`),
@@ -146,6 +147,7 @@ export const analyticsAPI = {
   getVoiceTrends: () => api.get('/analytics/voice-trends'),
   getModuleStats: (courseId) => api.get(`/analytics/modules/course/${courseId}`),
   getModuleTrainees: (moduleId) => api.get(`/analytics/modules/${moduleId}/trainees`),
+  getHistory: (params) => api.get('/analytics/history', { params }),
   getStudentProgress: (params) => api.get('/analytics/admin/student-progress', { params }),
   getStudentProgress: (params) => api.get('/analytics/admin/student-progress', { params }),
 

@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { analyticsAPI } from '../../services/api'
 import { useAuthStore } from '../../store/authStore'
-import { BookOpen, Users, BarChart2, Tag } from 'lucide-react'
+import { BookOpen, Users, BarChart2, Tag, History } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import LearningHistory from '../../components/LearningHistory'
 
 export default function TrainerDashboard() {
     const { user } = useAuthStore()
@@ -12,7 +13,13 @@ export default function TrainerDashboard() {
         queryFn: () => analyticsAPI.getOverview(),
     })
 
+    const { data: historyData, isLoading: historyLoading } = useQuery({
+        queryKey: ['trainer-learning-history'],
+        queryFn: () => analyticsAPI.getHistory({ limit: 8 }),
+    })
+
     const stats = data?.data?.stats || {}
+    const history = historyData?.data?.history || []
 
     return (
         <div className="p-6 max-w-5xl mx-auto">
@@ -61,6 +68,30 @@ export default function TrainerDashboard() {
                         <p className="text-sm text-gray-500">Track progress and scores</p>
                     </div>
                 </Link>
+            </div>
+
+            <div className="card mt-8">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                    <div className="flex items-center gap-2">
+                        <History size={17} className="text-coral-500" />
+                        <h2 className="font-semibold text-gray-800">Recent Learning History</h2>
+                    </div>
+                    <Link to="/trainer/trainees" className="text-xs font-semibold text-brand-600 hover:underline">
+                        View students
+                    </Link>
+                </div>
+                {historyLoading ? (
+                    <div className="flex justify-center py-10">
+                        <div className="w-8 h-8 border-4 border-brand-100 border-t-brand-500 rounded-full animate-spin" />
+                    </div>
+                ) : (
+                    <LearningHistory
+                        items={history}
+                        showTrainee
+                        compact
+                        emptyText="No student history yet"
+                    />
+                )}
             </div>
         </div>
     )

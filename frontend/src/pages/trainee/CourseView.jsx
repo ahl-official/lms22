@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { formatDistanceToNow } from 'date-fns'
 import {
   coursesAPI, testsAPI, attemptsAPI, enrollmentsAPI,
   modulesAPI, lessonsAPI, lessonProgressAPI, rolePlayAPI,
@@ -17,143 +16,10 @@ import {
   BookOpen, Mic, ClipboardList, ChevronLeft, Lock, Play,
   CheckCircle, ChevronDown, ChevronRight, FileText, BookMarked,
   Award, Clock, XCircle, Layers, Video, Users,
-  History,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 // ── Lesson content area ────────────────────────────────────────────────────────
-const relativeTime = (date) => {
-  if (!date) return 'Never'
-  try { return formatDistanceToNow(new Date(date), { addSuffix: true }) }
-  catch { return 'Never' }
-}
-
-function HistoryItem({ icon: Icon, title, meta, score, tone = 'brand' }) {
-  const toneClass = {
-    brand: 'bg-brand-50 text-brand-600',
-    green: 'bg-green-50 text-green-600',
-    amber: 'bg-amber-50 text-amber-600',
-    gray: 'bg-gray-100 text-gray-500',
-  }[tone] || 'bg-brand-50 text-brand-600'
-
-  return (
-    <div className="flex items-start gap-3 p-3 rounded-xl border border-gray-100 bg-white">
-      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${toneClass}`}>
-        <Icon size={16} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-gray-800 truncate">{title}</p>
-        <p className="text-xs text-gray-400 mt-0.5">{meta}</p>
-      </div>
-      {score != null && (
-        <span className={`text-xs font-bold px-2 py-1 rounded-lg ${score >= 70 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-          {score}%
-        </span>
-      )}
-    </div>
-  )
-}
-
-function CourseHistory({ courseId }) {
-  const { data: roleHistoryData, isLoading: roleLoading } = useQuery({
-    queryKey: ['role-play-history', courseId],
-    queryFn: () => rolePlayAPI.getMyHistory({ course_id: courseId }),
-    enabled: !!courseId,
-  })
-  const { data: attemptsData, isLoading: attemptsLoading } = useQuery({
-    queryKey: ['my-attempts-history'],
-    queryFn: () => attemptsAPI.getMy(),
-  })
-  const { data: progressData, isLoading: progressLoading } = useQuery({
-    queryKey: ['lesson-progress-history', courseId],
-    queryFn: () => lessonProgressAPI.getByCourse(courseId),
-    enabled: !!courseId,
-  })
-
-  const roleplays = roleHistoryData?.data?.attempts || []
-  const assessments = (attemptsData?.data?.attempts || []).filter(a => {
-    const cid = a.course_id?._id || a.course_id
-    return cid?.toString() === courseId?.toString()
-  })
-  const lessonProgress = progressData?.data?.progress || []
-  const loading = roleLoading || attemptsLoading || progressLoading
-
-  if (loading) {
-    return (
-      <div className="flex justify-center py-12">
-        <div className="w-8 h-8 border-4 border-brand-100 border-t-brand-500 rounded-full animate-spin" />
-      </div>
-    )
-  }
-
-  if (!roleplays.length && !assessments.length && !lessonProgress.length) {
-    return (
-      <div className="text-center py-12 text-gray-400">
-        <History size={30} className="mx-auto mb-2 opacity-40" />
-        <p className="text-sm">No history yet</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-5">
-      {roleplays.length > 0 && (
-        <section>
-          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Roleplay history</p>
-          <div className="space-y-2">
-            {roleplays.map(item => (
-              <HistoryItem
-                key={item._id}
-                icon={Users}
-                title={`${item.lesson_title || 'Roleplay'} ${item.passed ? 'passed' : 'attempted'}`}
-                meta={`${item.question_count || 0} voice answer${item.question_count === 1 ? '' : 's'} - ${relativeTime(item.submitted_at)}`}
-                score={item.score}
-                tone={item.passed ? 'green' : 'brand'}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {assessments.length > 0 && (
-        <section>
-          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Assessment history</p>
-          <div className="space-y-2">
-            {assessments.map(item => (
-              <HistoryItem
-                key={item._id}
-                icon={ClipboardList}
-                title={item.test_id?.title || 'Assessment'}
-                meta={`${item.test_type || 'test'} - ${relativeTime(item.submitted_at)}`}
-                score={item.score}
-                tone={item.score >= (item.passing_score || 60) ? 'green' : 'amber'}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {lessonProgress.length > 0 && (
-        <section>
-          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Video and module progress</p>
-          <div className="space-y-2">
-            {lessonProgress.map(item => (
-              <HistoryItem
-                key={item._id || `${item.lesson_id?._id}-${item.module_id?._id}`}
-                icon={BookOpen}
-                title={item.lesson_id?.title || 'Lesson'}
-                meta={`${item.module_id?.title || 'Module'} - ${item.status || 'in progress'} - ${item.watch_percent || 0}% watched`}
-                score={item.score}
-                tone={item.status === 'completed' ? 'green' : 'gray'}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-    </div>
-  )
-}
-
 function LessonContent({ lesson, onComplete, onVideoEnd }) {
   const qc = useQueryClient()
   const hasQuiz = lesson.quiz_questions?.length > 0
@@ -172,14 +38,12 @@ function LessonContent({ lesson, onComplete, onVideoEnd }) {
 
   const rolePlayProgress = rolePlayData?.data?.progress
   const assessmentLocked = hasRolePlay && (hasQuiz || hasTest) && !rolePlayProgress?.unlocked
-  const courseId = lesson.course_id?._id || lesson.course_id
   const hasLearningContent = hasVideo || hasText || hasNotes || hasAI
 
   const availableTabs = [
     hasLearningContent && { key: 'learn', label: 'Video & Notes', icon: Video },
     hasRolePlay && { key: 'roleplay', label: 'Role Playing', icon: Users },
     (hasQuiz || hasTest) && { key: 'quiz', label: 'Assessment', icon: assessmentLocked ? Lock : ClipboardList },
-    { key: 'history', label: 'History', icon: History },
   ].filter(Boolean)
 
   const [tab, setTab] = useState(availableTabs[0]?.key || 'learn')
@@ -300,15 +164,6 @@ function LessonContent({ lesson, onComplete, onVideoEnd }) {
         </div>
       )}
 
-      {tab === 'history' && (
-        <div className="card">
-          <div className="flex items-center gap-2 mb-4">
-            <History size={16} className="text-brand-500" />
-            <h3 className="font-semibold text-gray-800">History</h3>
-          </div>
-          <CourseHistory courseId={courseId} />
-        </div>
-      )}
     </div>
   )
 }

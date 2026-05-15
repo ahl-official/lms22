@@ -5,6 +5,7 @@ import {
   LayoutDashboard, BookOpen, BarChart2,
   GraduationCap, LogOut, Menu, X, Bell,
   Tag, Mic, Settings, MessageCircle, Briefcase, TrendingUp,
+  History,
 } from 'lucide-react'
 
 const NAV = {
@@ -14,6 +15,7 @@ const NAV = {
     { to: '/admin/trainers', label: 'Trainers', icon: Briefcase },
     { to: '/admin/courses', label: 'Courses', icon: BookOpen },
     { to: '/admin/progress', label: 'Student Progress', icon: TrendingUp },
+    { to: '/admin/history', label: 'History', icon: History },
     { to: '/admin/categories', label: 'Roles', icon: Tag },
     { to: '/admin/ai-settings', label: 'AI Settings', icon: Settings },
     { to: '/admin/whatsapp', label: 'WhatsApp Settings', icon: MessageCircle },
@@ -25,6 +27,7 @@ const NAV = {
   ],
   trainee: [
     { to: '/trainee', label: 'My Courses', icon: BookOpen, end: true },
+    { to: '/trainee/history', label: 'History', icon: History },
   ],
 }
 

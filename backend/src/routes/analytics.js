@@ -598,4 +598,105 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
   } catch (err) { next(err); }
 });
 
+// GET /api/analytics/history
+// Recent roleplay, assessment, and lesson activity for admin/trainer dashboards.
+router.get('/history', authenticate, authorize('admin', 'trainer'), async (req, res, next) => {
+  try {
+    const limit = Math.min(100, Math.max(5, Number(req.query.limit) || 30));
+    const trainerCourseIds = req.user.role === 'trainer'
+      ? (await Course.find({ created_by: req.user._id }).select('_id')).map(c => c._id)
+      : null;
+
+    const courseFilter = trainerCourseIds ? { course_id: { $in: trainerCourseIds } } : {};
+
+    const [roleplays, assessments, lessons] = await Promise.all([
+      RolePlayAttempt.find(courseFilter)
+        .select('trainee_id course_id module_id lesson_id scenario_type score grade passed question_count submitted_at summary conversation')
+        .populate('trainee_id', 'name email phone')
+        .populate('course_id', 'title')
+        .populate('module_id', 'title order')
+        .populate('lesson_id', 'title')
+        .sort({ submitted_at: -1 })
+        .limit(limit)
+        .lean(),
+      Attempt.find({ ...courseFilter, status: 'scored' })
+        .select('trainee_id course_id test_id test_type score passing_score submitted_at ai_feedback')
+        .populate('trainee_id', 'name email phone')
+        .populate('course_id', 'title')
+        .populate('test_id', 'title')
+        .sort({ submitted_at: -1 })
+        .limit(limit)
+        .lean(),
+      LessonProgress.find(courseFilter)
+        .select('trainee_id course_id module_id lesson_id status score watch_percent completed_at updatedAt')
+        .populate('trainee_id', 'name email phone')
+        .populate('course_id', 'title')
+        .populate('module_id', 'title order')
+        .populate('lesson_id', 'title')
+        .sort({ updatedAt: -1 })
+        .limit(limit)
+        .lean(),
+    ]);
+
+    const history = [
+      ...roleplays.map(item => ({
+        id: item._id,
+        type: 'roleplay',
+        trainee_id: item.trainee_id?._id,
+        trainee_name: item.trainee_id?.name || 'Unknown trainee',
+        trainee_email: item.trainee_id?.email || '',
+        trainee_phone: item.trainee_id?.phone || '',
+        course_title: item.course_id?.title || 'Unknown course',
+        module_title: item.module_id?.title || null,
+        lesson_title: item.lesson_id?.title || null,
+        title: item.lesson_id?.title || 'Roleplay',
+        score: item.score,
+        grade: item.grade,
+        passed: !!item.passed,
+        question_count: item.question_count || 0,
+        feedback: item.summary?.summary || null,
+        responses: (item.conversation || []).filter(t => t.role === 'user').map(t => t.content).slice(0, 3),
+        date: item.submitted_at || item.createdAt,
+      })),
+      ...assessments.map(item => ({
+        id: item._id,
+        type: 'assessment',
+        trainee_id: item.trainee_id?._id,
+        trainee_name: item.trainee_id?.name || 'Unknown trainee',
+        trainee_email: item.trainee_id?.email || '',
+        trainee_phone: item.trainee_id?.phone || '',
+        course_title: item.course_id?.title || 'Unknown course',
+        title: item.test_id?.title || 'Assessment',
+        test_type: item.test_type,
+        score: item.score,
+        passing_score: item.passing_score || 60,
+        passed: item.score != null ? item.score >= (item.passing_score || 60) : false,
+        feedback: item.ai_feedback || null,
+        date: item.submitted_at,
+      })),
+      ...lessons.map(item => ({
+        id: item._id,
+        type: 'lesson',
+        trainee_id: item.trainee_id?._id,
+        trainee_name: item.trainee_id?.name || 'Unknown trainee',
+        trainee_email: item.trainee_id?.email || '',
+        trainee_phone: item.trainee_id?.phone || '',
+        course_title: item.course_id?.title || 'Unknown course',
+        module_title: item.module_id?.title || null,
+        lesson_title: item.lesson_id?.title || null,
+        title: item.lesson_id?.title || 'Lesson',
+        status: item.status,
+        score: item.score,
+        watch_percent: item.watch_percent || 0,
+        date: item.completed_at || item.updatedAt,
+      })),
+    ]
+      .filter(item => item.date)
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, limit);
+
+    res.json({ success: true, history });
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

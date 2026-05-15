@@ -14,6 +14,7 @@ const AdminAISettings = lazy(() => import('./pages/admin/AISettings'))
 const AdminWhatsApp = lazy(() => import('./pages/admin/Whatsapp'))
 const AdminModuleReview = lazy(() => import('./pages/admin/ModuleReview'))
 const AdminStudentProgress = lazy(() => import('./pages/admin/StudentProgress'))
+const AdminHistory = lazy(() => import('./pages/admin/History'))
 const TrainerDashboard = lazy(() => import('./pages/trainer/Dashboard'))
 const TrainerCourses = lazy(() => import('./pages/trainer/Courses'))
 const TrainerCreateCourse = lazy(() => import('./pages/trainer/CreateCourse'))
@@ -21,6 +22,7 @@ const TrainerTrainees = lazy(() => import('./pages/trainer/Trainees'))
 const TrainerAnalytics = lazy(() => import('./pages/trainer/Analytics'))
 const TrainerRecommendations = lazy(() => import('./pages/trainer/Recommendations'))
 const MyCourses = lazy(() => import('./pages/trainee/MyCourses'))
+const TraineeHistory = lazy(() => import('./pages/trainee/History'))
 const CourseView = lazy(() => import('./pages/trainee/CourseView'))
 const TestResult = lazy(() => import('./pages/trainee/TestResult'))
 const VoiceTest = lazy(() => import('./pages/trainee/VoiceTest'))
@@ -54,6 +56,7 @@ export default function App() {
             <Route path="trainers" element={<AdminTrainers />} />
             <Route path="courses" element={<AdminCourses />} />
             <Route path="progress" element={<AdminStudentProgress />} />
+            <Route path="history" element={<AdminHistory />} />
             <Route path="categories" element={<AdminCategories />} />
             <Route path="ai-settings" element={<AdminAISettings />} />
             <Route path="whatsapp" element={<AdminWhatsApp />} />
@@ -75,6 +78,7 @@ export default function App() {
           {/* Trainee */}
           <Route path="/trainee" element={<ProtectedRoute allowedRoles={['trainee']}><Layout /></ProtectedRoute>}>
             <Route index element={<MyCourses />} />
+            <Route path="history" element={<TraineeHistory />} />
             <Route path="courses/:id" element={<CourseView />} />
             <Route path="results/:attemptId" element={<TestResult />} />
           </Route>

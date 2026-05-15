@@ -116,6 +116,22 @@ router.put('/watch', authenticate, authorize('trainee'), async (req, res, next) 
   }
 });
 
+// ── GET /api/lesson-progress/my ────────────────────────────────────────────────
+router.get('/my', authenticate, authorize('trainee'), async (req, res, next) => {
+  try {
+    const items = await LessonProgress.find({ trainee_id: req.user._id })
+      .populate('course_id', 'title')
+      .populate('lesson_id', 'title duration_minutes')
+      .populate('module_id', 'title order')
+      .select('course_id lesson_id module_id status score completed_at watch_percent updatedAt')
+      .sort({ updatedAt: -1 });
+
+    res.json({ success: true, progress: items });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── GET /api/lesson-progress/course/:courseId ──────────────────────────────────
 router.get('/course/:courseId', authenticate, authorize('trainee'), async (req, res, next) => {
   try {
