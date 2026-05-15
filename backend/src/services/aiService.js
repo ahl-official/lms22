@@ -231,8 +231,9 @@ SCORING RULES:
 - Core meaning matches: Minimum 7.5/10.
 - Missing one supporting detail: subtract only 1-2 points, never more.
 - If the answer is helpful but incomplete, keep it around 7/10 instead of failing it.
+- Give 8/10 or higher for small but useful client-facing moves: reassurance, asking a clarifying question, offering a next step, or explaining one concrete detail.
 - Only score below 5/10 for answers that are wrong, dismissive, unsafe, or unrelated.
-- Feedback should feel fun, warm, and coach-like. Celebrate what worked before naming one next move.
+- Feedback should feel fun, warm, and coach-like. Always celebrate what worked before naming one next move.
 
 PENALTIES: arguing with customer (-4), explicitly wrong facts (-3), dismissive tone (-3), long but confusing answer (-1 to -2)
 
@@ -254,6 +255,7 @@ IMPORTANT:
 5. Recognize synonyms (e.g. "client" == "customer").
 6. Missing one detail should only cost 1-2 points. Do not turn a useful answer into a fail.
 7. Keep feedback upbeat, practical, and a little fun. Praise the useful part first, then give one clear next move.
+8. Give 8/10 or higher for small useful client-facing moves: reassurance, clarifying questions, concrete details, or a next step.
 
 SCORING: Semantically correct but informal = 8/10. Covers most key points with fillers = 9/10. Helpful but incomplete = 7/10. Factually wrong or unrelated = <5/10.
 
@@ -311,8 +313,22 @@ Return ONLY valid JSON:
     if (!evaluation.feedback_tier) {
       evaluation.feedback_tier = score >= 8 ? 'positive' : score >= 5 ? 'constructive' : 'corrective';
     }
+    if (userAnswer.trim().split(/\s+/).length >= 8 && score >= 6 && score < 8) {
+      const clientMoves = [
+        /book|booking|appointment|schedule|consult/i,
+        /online|video|clinic|center|centre|travel|city|location/i,
+        /fee|cost|price|deduct|amount/i,
+        /help|guide|explain|reassur|understand/i,
+      ].filter(rx => rx.test(userAnswer)).length;
+      if (clientMoves >= 1) {
+        evaluation.overall_score = 8;
+        evaluation.feedback_tier = 'positive';
+        evaluation.feedback = evaluation.feedback || 'Good client-centered answer. You gave the customer a useful next step and kept the conversation moving.';
+      }
+    }
     if (!evaluation.spoken_feedback) {
-      if (score >= 8) evaluation.spoken_feedback = 'Excellent! That is correct and well-articulated.';
+      const finalScore = parseFloat(evaluation.overall_score) || score;
+      if (finalScore >= 8) evaluation.spoken_feedback = 'Nice work, that was client-friendly and moved the conversation forward.';
       else if (score >= 5) evaluation.spoken_feedback = 'Nice start. You covered the core idea; add one more detail next time.';
       else evaluation.spoken_feedback = 'Good try. Let us tighten the answer and make it clearer for the client.';
     }

@@ -554,12 +554,14 @@ Override all stricter scoring above with this client-centered scoring:
 - Partially helpful: explains something useful but misses part of the customer's concern -> 7.
 - Client-centered and mostly helpful: addresses the concern, reassures, and gives a reasonable next step -> 8-9.
 - Excellent: clear, specific, empathetic, accurate, and moves the client forward -> 9-10.
+- Give 8/10 or higher when the trainee does even small useful things that help the client, such as asking location/travel preference, offering online or clinic consultation, explaining the consultation fee/time, reassuring the client, or offering to help book.
 - If the trainee answers the customer's main concern in a way a real client could understand, do not score below 7 just because one expected detail is missing.
 - If they forget one supporting detail, subtract only 1-2 points. Do not keep pushing the score down for a small omission.
 - If the trainee gives a reasonable consultation or booking next step, treat that as a strong positive.
 - Keep coaching fun, warm, and energizing. Give one clear next move, not a harsh critique.
 
 The coaching tip MUST reference the lesson specifically:
+- Always start feedback by naming one thing the trainee did well, even if the answer was imperfect.
 - If they answered well: name exactly what technique from the lesson they used correctly
 - If they missed it: tell them exactly what the lesson says they should have said or done
 - Include spoken_feedback as one short upbeat sentence the trainee can hear aloud before the customer continues.
@@ -582,9 +584,21 @@ tier: "positive" (8-10), "constructive" (5-7), "corrective" (1-4).`
     const parsed = parseJSON(res.data.choices[0].message.content)
     const score = Number(parsed?.coaching?.score)
     const hasSubstance = userMessage.trim().split(/\s+/).length >= 8
-    if (hasSubstance && score >= 5 && score < 7) {
+    const helpfulClientMoves = [
+        /book|booking|appointment|schedule|consult/i,
+        /online|video|clinic|center|centre|mumbai|bangalore|delhi|travel|city|location/i,
+        /fee|cost|price|500|deduct|calculate|amount/i,
+        /expert|guide|explain|help|do not worry|reassur/i,
+    ].filter(rx => rx.test(userMessage)).length
+    if (hasSubstance && helpfulClientMoves >= 2 && score < 8) {
+        parsed.coaching.score = 8
+        parsed.coaching.tier = 'positive'
+        parsed.coaching.what_worked = parsed.coaching.what_worked || 'You helped the client move forward by explaining consultation options and giving a practical next step.'
+        parsed.coaching.spoken_feedback = 'Nice work, you gave the client useful options and moved them toward booking.'
+    } else if (hasSubstance && score >= 5 && score < 7) {
         parsed.coaching.score = 7
         parsed.coaching.tier = 'constructive'
+        parsed.coaching.what_worked = parsed.coaching.what_worked || 'You gave the client something useful to work with.'
         parsed.coaching.spoken_feedback = parsed.coaching.spoken_feedback || 'Nice start. You helped the client; add one more detail next time.'
     }
     return parsed
