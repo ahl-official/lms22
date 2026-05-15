@@ -536,7 +536,7 @@ CUSTOMER TONE OVERRIDE:
 Do NOT roleplay as a consultant or give the trainee advice in character.
 
 ━━ COACHING (evaluate the trainee's consultant response) ━━
-Score STRICTLY against what the lesson teaches. The trainee is the consultant — evaluate whether they answered like one.
+Score generously against what the lesson teaches. The trainee is the consultant, but grade from whether a real client would feel helped.
 
 SCORING:
 1. "idk", blank, single word, completely off-topic → 1-2 MAX, no exceptions
@@ -551,16 +551,18 @@ Override all stricter scoring above with this client-centered scoring:
 - Reward answers that reduce confusion, reassure the customer, explain the service simply, and guide the customer toward a useful next step.
 - Blank, single-word, or completely off-topic -> 2-3.
 - Somewhat relevant but unclear or not helpful for the client -> 4-5.
-- Partially helpful: explains something useful but misses part of the customer's concern -> 6-7.
-- Client-centered and mostly helpful: addresses the concern, reassures, and gives a reasonable next step -> 8.
+- Partially helpful: explains something useful but misses part of the customer's concern -> 7.
+- Client-centered and mostly helpful: addresses the concern, reassures, and gives a reasonable next step -> 8-9.
 - Excellent: clear, specific, empathetic, accurate, and moves the client forward -> 9-10.
 - If the trainee answers the customer's main concern in a way a real client could understand, do not score below 7 just because one expected detail is missing.
+- If they forget one supporting detail, subtract only 1-2 points. Do not keep pushing the score down for a small omission.
 - If the trainee gives a reasonable consultation or booking next step, treat that as a strong positive.
+- Keep coaching fun, warm, and energizing. Give one clear next move, not a harsh critique.
 
 The coaching tip MUST reference the lesson specifically:
 - If they answered well: name exactly what technique from the lesson they used correctly
 - If they missed it: tell them exactly what the lesson says they should have said or done
-- Include spoken_feedback as one short friendly sentence the trainee can hear aloud before the customer continues.
+- Include spoken_feedback as one short upbeat sentence the trainee can hear aloud before the customer continues.
 
 Return ONLY valid JSON:
 {
@@ -577,7 +579,15 @@ Return ONLY valid JSON:
 tier: "positive" (8-10), "constructive" (5-7), "corrective" (1-4).`
 
     const res = await callLLM([{ role: 'user', content: prompt }], 600)
-    return parseJSON(res.data.choices[0].message.content)
+    const parsed = parseJSON(res.data.choices[0].message.content)
+    const score = Number(parsed?.coaching?.score)
+    const hasSubstance = userMessage.trim().split(/\s+/).length >= 8
+    if (hasSubstance && score >= 5 && score < 7) {
+        parsed.coaching.score = 7
+        parsed.coaching.tier = 'constructive'
+        parsed.coaching.spoken_feedback = parsed.coaching.spoken_feedback || 'Nice start. You helped the client; add one more detail next time.'
+    }
+    return parsed
 }
 
 // ── POST /api/role-play/turn (text input) ─────────────────────────────────────
@@ -701,10 +711,12 @@ Override all stricter final scoring above with this client-centered scale:
 - Score from whether the client would feel understood, informed, and guided toward a next step.
 - Mostly evasive or not useful to the client -> 35-50
 - Some effort, but the client would still be confused -> 50-60
-- Partially useful and mostly relevant -> 60-70
-- Helpful, client-centered, and reasonably accurate -> 70-85
+- Partially useful and mostly relevant -> 65-75
+- Helpful, client-centered, and reasonably accurate -> 75-88
 - Very clear, empathetic, specific, and confidence-building -> 85+
 - Do not require every expected detail for a passing score. A useful answer that handles the client's main concern should usually be 70+.
+- If the trainee forgets one supporting detail, subtract only 5-10 percentage points. Do not fail them for one missed detail.
+- Keep the summary encouraging and a bit fun: lead with progress, then give one practical thing to try next.
 
 Return ONLY valid JSON:
 {
@@ -724,6 +736,13 @@ Return ONLY valid JSON:
 
         const res2 = await callLLM([{ role: 'user', content: prompt }], 700)
         const summary = parseJSON(res2.data.choices[0].message.content)
+        const hasSubstantiveAnswers = conversation
+            .filter(m => m.role === 'user')
+            .some(m => (m.content || '').trim().split(/\s+/).length >= 8)
+        if (hasSubstantiveAnswers && summary.overall_score >= 60 && summary.overall_score < 70) {
+            summary.overall_score = 70
+            summary.grade = 'B-'
+        }
         res.json({ success: true, summary })
     } catch (err) { next(err) }
 })

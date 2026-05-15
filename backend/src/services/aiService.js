@@ -86,7 +86,29 @@ const scoreShortAnswer = (userAns, correctAns, keyPoints = []) => {
     k => userKeywords.has(k) || userLower.includes(k)
   );
 
-  return matched.length / expectedKeywords.length >= 0.4;
+  return matched.length / expectedKeywords.length >= 0.25;
+};
+
+const shortAnswerCredit = (userAns, correctAns, keyPoints = []) => {
+  const trimmed = (userAns || '').trim();
+  if (trimmed.length < 3) return 0;
+  if (scoreShortAnswer(userAns, correctAns, keyPoints)) return 1;
+
+  const expectedKeywords = [
+    ...extractKeywords(correctAns),
+    ...keyPoints.flatMap(kp => extractKeywords(kp)),
+  ];
+
+  if (!expectedKeywords.length) return trimmed.split(/\s+/).length >= 3 ? 0.8 : 0.5;
+
+  const userLower = trimmed.toLowerCase();
+  const userKeywords = new Set(extractKeywords(userAns));
+  const matched = expectedKeywords.filter(k => userKeywords.has(k) || userLower.includes(k));
+  const ratio = matched.length / expectedKeywords.length;
+
+  if (ratio >= 0.15) return 0.85;
+  if (trimmed.split(/\s+/).length >= 5) return 0.7;
+  return 0.45;
 };
 
 // ── Adaptive difficulty based on past attempt scores ──────────────────────────
@@ -153,18 +175,22 @@ const scoreWrittenAttempt = async (questions, answers) => {
     const correctAns = (q.correct_answer || '').toString().trim().toLowerCase();
 
     let isCorrect;
+    let earned = 0;
     if (q.type === 'mcq') {
       isCorrect = userAns === correctAns;
+      earned = isCorrect ? (q.points || 1) : 0;
     } else {
-      // short_answer: keyword-overlap scoring
-      isCorrect = scoreShortAnswer(
+      // short_answer: forgiving partial credit for useful answers
+      const credit = shortAnswerCredit(
         answers[i] || '',
         q.correct_answer || '',
         q.key_points || []
       );
+      earned = (q.points || 1) * credit;
+      isCorrect = credit >= 0.8;
     }
 
-    if (isCorrect) correct += q.points || 1;
+    correct += earned;
     total += q.points || 1;
 
     return {
@@ -198,13 +224,17 @@ EVALUATION CRITERIA:
 - Paraphrasing is ENCOURAGED — if they convey the right concept in different words, give FULL CREDIT.
 - Short but correct answers score HIGH (8/10+). Do not punish brevity.
 - Recognize synonyms (e.g. "expensive" == "costly", "trust" == "confidence").
+- Be generous and client-centered: if the answer would reassure or help a real customer, score it well.
 
 SCORING RULES:
 - Technique correct but different wording: Score 8/10 or higher.
-- Core meaning matches: Minimum 7/10.
-- Only penalize for explicitly wrong info or forbidden mistakes.
+- Core meaning matches: Minimum 7.5/10.
+- Missing one supporting detail: subtract only 1-2 points, never more.
+- If the answer is helpful but incomplete, keep it around 7/10 instead of failing it.
+- Only score below 5/10 for answers that are wrong, dismissive, unsafe, or unrelated.
+- Feedback should feel fun, warm, and coach-like. Celebrate what worked before naming one next move.
 
-PENALTIES: apologizing for price/limitations (-3), arguing with customer (-5), over-explaining (-2)
+PENALTIES: arguing with customer (-4), explicitly wrong facts (-3), dismissive tone (-3), long but confusing answer (-1 to -2)
 
 OBJECTION QUESTION: ${question.question}
 EXPECTED: ${question.expected_answer || ''}
@@ -222,8 +252,10 @@ IMPORTANT:
 3. Do NOT penalize for different vocabulary if meaning is preserved.
 4. Short but correct answers score HIGH. Do not punish brevity.
 5. Recognize synonyms (e.g. "client" == "customer").
+6. Missing one detail should only cost 1-2 points. Do not turn a useful answer into a fail.
+7. Keep feedback upbeat, practical, and a little fun. Praise the useful part first, then give one clear next move.
 
-SCORING: Semantically correct but informal = 8/10. Covers key points with fillers = 9/10. Factually wrong = <5/10.
+SCORING: Semantically correct but informal = 8/10. Covers most key points with fillers = 9/10. Helpful but incomplete = 7/10. Factually wrong or unrelated = <5/10.
 
 QUESTION: ${question.question}
 EXPECTED ANSWER: ${question.expected_answer || ''}
@@ -240,7 +272,7 @@ Return ONLY valid JSON:
       model: CHAT_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: 'Evaluate this answer strictly but fairly.' },
+        { role: 'user', content: 'Evaluate this answer generously and practically. Reward helpful client-centered answers.' },
       ],
       temperature: 0.3,
       max_tokens: 600,
@@ -281,8 +313,8 @@ Return ONLY valid JSON:
     }
     if (!evaluation.spoken_feedback) {
       if (score >= 8) evaluation.spoken_feedback = 'Excellent! That is correct and well-articulated.';
-      else if (score >= 5) evaluation.spoken_feedback = 'Good effort. You covered the main points but missed a few details.';
-      else evaluation.spoken_feedback = 'Not quite. Please review the training material.';
+      else if (score >= 5) evaluation.spoken_feedback = 'Nice start. You covered the core idea; add one more detail next time.';
+      else evaluation.spoken_feedback = 'Good try. Let us tighten the answer and make it clearer for the client.';
     }
   } catch (_) { }
 
@@ -299,7 +331,13 @@ const scoreVoiceAttempt = async (voiceTranscript, questions) => {
     messages: [
       {
         role: 'system',
-        content: `You are a voice assessment scorer. Score the candidate's spoken response.
+        content: `You are a friendly, generous voice assessment scorer. Score the candidate's spoken response from a client-centered perspective.
+Rules:
+- Reward answers that are helpful, reassuring, and mostly accurate, even if not perfectly worded.
+- If the candidate forgets one supporting detail, subtract only 5-10 percentage points.
+- Do not fail a useful answer just because it does not match the expected wording exactly.
+- Only score harshly for wrong facts, unsafe advice, dismissive tone, or answers that do not address the question.
+- Feedback should be upbeat, short, and practical.
 Return ONLY valid JSON:
 {"score":85,"feedback":"Overall assessment","rubric_breakdown":{"content_accuracy":80,"communication_clarity":90,"completeness":85,"confidence_score":80}}`,
       },
@@ -308,7 +346,18 @@ Return ONLY valid JSON:
     temperature: 0.3,
   });
 
-  return parseJSON(response.choices[0].message.content);
+  const parsed = parseJSON(response.choices[0].message.content);
+  if (voiceTranscript.trim().split(/\s+/).length >= 20 && parsed.score >= 60 && parsed.score < 70) {
+    parsed.score = 70;
+    if (parsed.rubric_breakdown) {
+      for (const key of Object.keys(parsed.rubric_breakdown)) {
+        if (parsed.rubric_breakdown[key] >= 60 && parsed.rubric_breakdown[key] < 70) {
+          parsed.rubric_breakdown[key] = 70;
+        }
+      }
+    }
+  }
+  return parsed;
 };
 
 // ── Generate next dynamic question ────────────────────────────────────────────
@@ -355,7 +404,7 @@ const scoreConversation = async ({ courseTitle, transcript, conversation }) => {
     messages: [
       {
         role: 'system',
-        content: `You are an expert assessor scoring a verbal exam for "${courseTitle}".
+        content: `You are a friendly, practical assessor scoring a verbal exam for "${courseTitle}".
 Return ONLY valid JSON, no markdown:
 {
   "score": 85,
@@ -384,6 +433,11 @@ Return ONLY valid JSON, no markdown:
 
 Rules:
 - score = average of rubric_breakdown values
+- Score from the client's perspective first: would the client feel understood, informed, and guided?
+- If the trainee misses one supporting detail, subtract only 5-10 percentage points from the relevant category.
+- Helpful but incomplete answers should usually stay in the 70-80 range.
+- Good client-centered answers with natural wording should score 80+.
+- Do not require a perfect script or every expected phrase.
 - strengths must be specific observations, not generic praise
 - improvement_areas must be specific — "study more" is NOT acceptable
 - each action must name a concrete next step tied to this course
@@ -397,7 +451,19 @@ Rules:
     temperature: 0.3,
   });
 
-  return parseJSON(response.choices[0].message.content);
+  const parsed = parseJSON(response.choices[0].message.content);
+  const hasSubstantiveAnswers = conversation.some(t => (t.answer || '').trim().split(/\s+/).length >= 8);
+  if (hasSubstantiveAnswers && parsed.score >= 60 && parsed.score < 70) {
+    parsed.score = 70;
+    if (parsed.rubric_breakdown) {
+      for (const key of Object.keys(parsed.rubric_breakdown)) {
+        if (parsed.rubric_breakdown[key] >= 60 && parsed.rubric_breakdown[key] < 70) {
+          parsed.rubric_breakdown[key] = 70;
+        }
+      }
+    }
+  }
+  return parsed;
 };
 
 // ── Embeddings ────────────────────────────────────────────────────────────────
