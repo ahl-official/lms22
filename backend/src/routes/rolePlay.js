@@ -439,12 +439,16 @@ SCORING:
 5. Good — clearly applied the lesson's teaching to answer the customer → 6-8
 6. Excellent — answered with confidence, specifics, and full command of lesson content → 8-10
 
-Use this easier scoring override instead of the stricter scale above:
-- Blank, single-word, or completely off-topic answers can still receive 2-3.
-- Generic but relevant answers should receive 3-4.
-- Partial understanding should receive 5-6.
-- Good lesson application with minor gaps should receive 7-8.
-- Strong, specific lesson application should receive 9-10.
+Override all stricter scoring above with this client-centered scoring:
+- Score from the client's perspective first. Do not require a perfect script match.
+- Reward answers that reduce confusion, reassure the customer, explain the service simply, and guide the customer toward a useful next step.
+- Blank, single-word, or completely off-topic -> 2-3.
+- Somewhat relevant but unclear or not helpful for the client -> 4-5.
+- Partially helpful: explains something useful but misses part of the customer's concern -> 6-7.
+- Client-centered and mostly helpful: addresses the concern, reassures, and gives a reasonable next step -> 8.
+- Excellent: clear, specific, empathetic, accurate, and moves the client forward -> 9-10.
+- If the trainee answers the customer's main concern in a way a real client could understand, do not score below 7 just because one expected detail is missing.
+- If the trainee gives a reasonable consultation or booking next step, treat that as a strong positive.
 
 The coaching tip MUST reference the lesson specifically:
 - If they answered well: name exactly what technique from the lesson they used correctly
@@ -586,12 +590,14 @@ SCORING:
 - Good — clearly demonstrated the lesson's teachings → 65-80
 - Excellent — answered like a trained consultant with full command of lesson content → 80+
 
-Use this easier final scoring override instead of the stricter scale above:
-- Mostly evasive or ignored lesson content -> 35-50
-- Some effort but missed key lesson techniques -> 50-60
-- Average, with partial lesson knowledge -> 60-70
-- Good, clearly demonstrated the lesson's teachings -> 70-85
-- Excellent, confident and specific lesson application -> 85+
+Override all stricter final scoring above with this client-centered scale:
+- Score from whether the client would feel understood, informed, and guided toward a next step.
+- Mostly evasive or not useful to the client -> 35-50
+- Some effort, but the client would still be confused -> 50-60
+- Partially useful and mostly relevant -> 60-70
+- Helpful, client-centered, and reasonably accurate -> 70-85
+- Very clear, empathetic, specific, and confidence-building -> 85+
+- Do not require every expected detail for a passing score. A useful answer that handles the client's main concern should usually be 70+.
 
 Return ONLY valid JSON:
 {
