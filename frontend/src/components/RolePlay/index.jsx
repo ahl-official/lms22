@@ -256,6 +256,9 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
                     score: nextSummary.overall_score,
                     scenario_type: scenarioType,
                     question_count: conversationOverride.filter(m => m.role === 'user').length,
+                    scenario,
+                    conversation: conversationOverride,
+                    summary: nextSummary,
                 })
                 const nextProgress = progressRes.data.progress
                 setGateProgress(nextProgress)

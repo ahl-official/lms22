@@ -168,6 +168,8 @@ export const rolePlayAPI = {
   getProgress: (lessonId, traineeId) => api.get(`/role-play/progress/${lessonId}`, {
     params: traineeId ? { trainee_id: traineeId } : undefined,
   }),
+  getMyHistory: (params) => api.get('/role-play/history/me', { params }),
+  getTraineeHistory: (traineeId, params) => api.get(`/role-play/history/trainee/${traineeId}`, { params }),
   recordProgress: (data) => api.post('/role-play/progress', data),
   unlockProgress: (lessonId, data) => api.put(`/role-play/progress/${lessonId}/unlock`, data),
   startScenario: (data) => api.post('/role-play/scenario', data),

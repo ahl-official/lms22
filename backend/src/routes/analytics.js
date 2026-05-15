@@ -6,6 +6,8 @@ const Test = require('../models/Test');
 const Enrollment = require('../models/Enrollment');
 const Attempt = require('../models/Attempt');
 const RolePlayProgress = require('../models/RolePlayProgress');
+const RolePlayAttempt = require('../models/RolePlayAttempt');
+const LessonProgress = require('../models/LessonProgress');
 const { authenticate, authorize } = require('../middleware/auth');
 
 // GET /api/analytics/overview
@@ -311,19 +313,35 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
     }
 
     const traineeIds = trainees.map(t => t._id);
-    const since90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-
     // ── Fetch enrollments + attempts in parallel ─────────────────────────────
-    const [enrollments, attempts, rolePlays] = await Promise.all([
+    const [enrollments, attempts, rolePlays, rolePlayAttempts, lessonProgressItems] = await Promise.all([
       Enrollment.find({ trainee_id: { $in: traineeIds } })
         .populate('course_id', 'title')
         .lean(),
-      Attempt.find({ trainee_id: { $in: traineeIds }, status: 'scored', submitted_at: { $gte: since90 } })
-        .select('trainee_id course_id score submitted_at test_type passing_score')
+      Attempt.find({ trainee_id: { $in: traineeIds }, status: 'scored' })
+        .select('trainee_id course_id test_id score submitted_at test_type passing_score ai_feedback')
+        .populate('course_id', 'title')
+        .populate('test_id', 'title test_type lesson_id')
         .lean(),
       RolePlayProgress.find({ trainee_id: { $in: traineeIds } })
         .select('trainee_id course_id lesson_id attempts_used best_score last_score passed unlocked_by_trainer last_attempt_at last_scenario_type last_question_count')
         .populate('lesson_id', 'title')
+        .lean(),
+      RolePlayAttempt.find({ trainee_id: { $in: traineeIds } })
+        .select('trainee_id course_id module_id lesson_id attempt_number scenario_type score grade passed question_count submitted_at summary conversation')
+        .populate('course_id', 'title')
+        .populate('module_id', 'title order')
+        .populate('lesson_id', 'title')
+        .sort({ submitted_at: -1 })
+        .limit(1500)
+        .lean(),
+      LessonProgress.find({ trainee_id: { $in: traineeIds } })
+        .select('trainee_id course_id module_id lesson_id status score watch_percent completed_at updatedAt')
+        .populate('course_id', 'title')
+        .populate('module_id', 'title order')
+        .populate('lesson_id', 'title')
+        .sort({ updatedAt: -1 })
+        .limit(1500)
         .lean(),
     ]);
 
@@ -349,12 +367,28 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
       rolePlayByTrainee[tid].push(rp);
     }
 
+    const rolePlayAttemptByTrainee = {};
+    for (const item of rolePlayAttempts) {
+      const tid = item.trainee_id.toString();
+      if (!rolePlayAttemptByTrainee[tid]) rolePlayAttemptByTrainee[tid] = [];
+      rolePlayAttemptByTrainee[tid].push(item);
+    }
+
+    const lessonProgressByTrainee = {};
+    for (const item of lessonProgressItems) {
+      const tid = item.trainee_id.toString();
+      if (!lessonProgressByTrainee[tid]) lessonProgressByTrainee[tid] = [];
+      lessonProgressByTrainee[tid].push(item);
+    }
+
     // ── Build student summaries ──────────────────────────────────────────────
     const students = trainees.map(trainee => {
       const tid = trainee._id.toString();
       const traineeEnrols = enrollByTrainee[tid] || [];
       const traineeAttempts = attemptByTrainee[tid] || [];
       const traineeRolePlays = rolePlayByTrainee[tid] || [];
+      const traineeRolePlayAttempts = rolePlayAttemptByTrainee[tid] || [];
+      const traineeLessonProgress = lessonProgressByTrainee[tid] || [];
 
       const totalCourses = traineeEnrols.length;
       const completedCourses = traineeEnrols.filter(e => e.status === 'completed').length;
@@ -401,7 +435,7 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
       // Per-course breakdown
       const courses = traineeEnrols.map(e => {
         const cid = (e.course_id?._id || e.course_id)?.toString();
-        const courseAttempts = traineeAttempts.filter(a => a.course_id?.toString() === cid);
+        const courseAttempts = traineeAttempts.filter(a => (a.course_id?._id || a.course_id)?.toString() === cid);
         const courseRolePlays = traineeRolePlays.filter(rp => rp.course_id?.toString() === cid);
         const courseScores = courseAttempts.map(a => a.score).filter(s => s != null);
         const sorted = [...courseAttempts].sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
@@ -448,6 +482,60 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
         };
       }).sort((a, b) => (b.progress || 0) - (a.progress || 0));
 
+      const roleplayHistory = traineeRolePlayAttempts.map(item => ({
+        id: item._id,
+        type: 'roleplay',
+        title: item.lesson_id?.title || 'Roleplay',
+        course_id: item.course_id?._id || item.course_id,
+        course_title: item.course_id?.title || 'Unknown course',
+        module_title: item.module_id?.title || null,
+        lesson_title: item.lesson_id?.title || null,
+        score: item.score,
+        grade: item.grade,
+        passed: !!item.passed,
+        question_count: item.question_count || 0,
+        scenario_type: item.scenario_type || null,
+        feedback: item.summary?.summary || null,
+        responses: (item.conversation || []).filter(t => t.role === 'user').map(t => ({
+          answer: t.content,
+          coaching: t.coaching || null,
+        })),
+        date: item.submitted_at || item.createdAt,
+      }));
+
+      const assessmentHistory = traineeAttempts.map(item => ({
+        id: item._id,
+        type: 'assessment',
+        title: item.test_id?.title || 'Assessment',
+        course_id: item.course_id?._id || item.course_id,
+        course_title: item.course_id?.title || 'Unknown course',
+        test_type: item.test_type,
+        score: item.score,
+        passing_score: item.passing_score || 60,
+        passed: item.score != null ? item.score >= (item.passing_score || 60) : false,
+        feedback: item.ai_feedback || null,
+        date: item.submitted_at,
+      }));
+
+      const lessonHistory = traineeLessonProgress.map(item => ({
+        id: item._id,
+        type: 'lesson',
+        title: item.lesson_id?.title || 'Lesson',
+        course_id: item.course_id?._id || item.course_id,
+        course_title: item.course_id?.title || 'Unknown course',
+        module_title: item.module_id?.title || null,
+        lesson_title: item.lesson_id?.title || null,
+        status: item.status,
+        score: item.score,
+        watch_percent: item.watch_percent || 0,
+        date: item.completed_at || item.updatedAt,
+      }));
+
+      const timeline = [...roleplayHistory, ...assessmentHistory, ...lessonHistory]
+        .filter(item => item.date)
+        .sort((a, b) => new Date(b.date) - new Date(a.date))
+        .slice(0, 30);
+
       return {
         _id: trainee._id,
         name: trainee.name,
@@ -467,6 +555,12 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
           status: computedStatus,
         },
         courses,
+        history: {
+          roleplays: roleplayHistory.slice(0, 30),
+          assessments: assessmentHistory.slice(0, 30),
+          lessons: lessonHistory.slice(0, 30),
+          timeline,
+        },
       };
     });
 

@@ -28,7 +28,7 @@ const ensureRolePlayUnlocked = async (lessonId, traineeId) => {
     const err = new Error(
         (progress?.attempts_used || 0) >= 10
             ? 'Contact trainer to unlock test as failed 10 times.'
-            : 'Score 80% in Role Playing to unlock this assessment.'
+            : 'Score 70% in Role Playing to unlock this assessment.'
     );
     err.status = 423;
     throw err;

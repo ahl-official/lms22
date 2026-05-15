@@ -21,7 +21,7 @@ const ensureRolePlayUnlocked = async (test, traineeId) => {
   const err = new Error(
     (progress?.attempts_used || 0) >= 10
       ? 'Contact trainer to unlock test as failed 10 times.'
-      : 'Score 80% in Role Playing to unlock this assessment.'
+      : 'Score 70% in Role Playing to unlock this assessment.'
   );
   err.status = 423;
   throw err;
@@ -110,6 +110,7 @@ router.get('/my', authenticate, async (req, res, next) => {
   try {
     const attempts = await Attempt.find({ trainee_id: req.user._id })
       .populate('course_id', 'title')
+      .populate('test_id', 'title test_type lesson_id')
       .sort({ submitted_at: -1 });
     res.json({ success: true, attempts });
   } catch (err) { next(err); }

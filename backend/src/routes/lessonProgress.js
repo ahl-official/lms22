@@ -122,7 +122,10 @@ router.get('/course/:courseId', authenticate, authorize('trainee'), async (req, 
     const items = await LessonProgress.find({
       trainee_id: req.user._id,
       course_id: req.params.courseId,
-    }).select('lesson_id module_id status score completed_at watch_percent');
+    })
+      .populate('lesson_id', 'title duration_minutes')
+      .populate('module_id', 'title order')
+      .select('lesson_id module_id status score completed_at watch_percent updatedAt');
 
     res.json({ success: true, progress: items });
   } catch (err) {

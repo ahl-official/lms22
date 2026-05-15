@@ -9,6 +9,7 @@ const multer = require('multer')
 const axios = require('axios')
 const Lesson = require('../models/Lesson')
 const RolePlayProgress = require('../models/RolePlayProgress')
+const RolePlayAttempt = require('../models/RolePlayAttempt')
 const { authenticate, authorize } = require('../middleware/auth')
 const { transcribeAudioBuffer } = require('../services/transcriptService')
 const { notifyRolePlayLocked } = require('../services/wahaService')
@@ -80,6 +81,30 @@ const formatCourseLock = (progresses) => {
     }
 }
 
+const formatAttempt = (attempt) => ({
+    _id: attempt._id,
+    trainee_id: attempt.trainee_id?._id || attempt.trainee_id,
+    course_id: attempt.course_id?._id || attempt.course_id,
+    course_title: attempt.course_id?.title,
+    module_id: attempt.module_id?._id || attempt.module_id,
+    module_title: attempt.module_id?.title,
+    lesson_id: attempt.lesson_id?._id || attempt.lesson_id,
+    lesson_title: attempt.lesson_id?.title,
+    progress_id: attempt.progress_id,
+    attempt_number: attempt.attempt_number || 1,
+    scenario_type: attempt.scenario_type,
+    scenario: attempt.scenario,
+    conversation: attempt.conversation || [],
+    summary: attempt.summary,
+    score: attempt.score,
+    grade: attempt.grade,
+    passed: !!attempt.passed,
+    question_count: attempt.question_count || 0,
+    submitted_at: attempt.submitted_at,
+    createdAt: attempt.createdAt,
+    updatedAt: attempt.updatedAt,
+})
+
 // GET /api/role-play/progress/:lessonId
 router.get('/progress/:lessonId', authenticate, async (req, res, next) => {
     try {
@@ -113,7 +138,7 @@ router.get('/progress/:lessonId', authenticate, async (req, res, next) => {
 // POST /api/role-play/progress
 router.post('/progress', authenticate, async (req, res, next) => {
     try {
-        const { lesson_id, score, scenario_type, question_count } = req.body
+        const { lesson_id, score, scenario_type, question_count, scenario = null, conversation = [], summary = null } = req.body
         const numericScore = Number(score)
 
         if (!lesson_id) return res.status(400).json({ success: false, message: 'lesson_id required' })
@@ -164,6 +189,37 @@ router.post('/progress', authenticate, async (req, res, next) => {
 
         await progress.save()
 
+        const safeConversation = Array.isArray(conversation)
+            ? conversation.slice(0, 20).map(turn => ({
+                role: turn.role === 'character' ? 'character' : 'user',
+                content: String(turn.content || '').slice(0, 5000),
+                source: turn.source || null,
+                coaching: turn.coaching || null,
+                created_at: turn.created_at || new Date(),
+            }))
+            : []
+        const priorAttemptCount = await RolePlayAttempt.countDocuments({
+            trainee_id: req.user._id,
+            lesson_id: lesson._id,
+        })
+        const attempt = await RolePlayAttempt.create({
+            trainee_id: req.user._id,
+            lesson_id: lesson._id,
+            module_id: lesson.module_id?._id || lesson.module_id || null,
+            course_id: lesson.course_id?._id || lesson.course_id,
+            progress_id: progress._id,
+            attempt_number: priorAttemptCount + 1,
+            scenario_type: scenario_type || null,
+            scenario,
+            conversation: safeConversation,
+            summary,
+            score: progress.last_score,
+            grade: summary?.grade || null,
+            passed: progress.last_score >= PASSING_SCORE,
+            question_count: progress.last_question_count,
+            submitted_at: progress.last_attempt_at,
+        })
+
         const isNowExhausted =
             !wasExhausted &&
             !progress.passed &&
@@ -187,7 +243,44 @@ router.post('/progress', authenticate, async (req, res, next) => {
             }
         }
 
-        res.json({ success: true, progress: formatProgress(progress) })
+        res.json({ success: true, progress: formatProgress(progress), attempt: formatAttempt(attempt) })
+    } catch (err) { next(err) }
+})
+
+const getHistory = async ({ traineeId, courseId, lessonId }) => {
+    const filter = { trainee_id: traineeId }
+    if (courseId) filter.course_id = courseId
+    if (lessonId) filter.lesson_id = lessonId
+
+    return RolePlayAttempt.find(filter)
+        .populate('course_id', 'title')
+        .populate('module_id', 'title order')
+        .populate('lesson_id', 'title')
+        .sort({ submitted_at: -1 })
+        .limit(100)
+}
+
+// GET /api/role-play/history/me
+router.get('/history/me', authenticate, async (req, res, next) => {
+    try {
+        const attempts = await getHistory({
+            traineeId: req.user._id,
+            courseId: req.query.course_id,
+            lessonId: req.query.lesson_id,
+        })
+        res.json({ success: true, attempts: attempts.map(formatAttempt) })
+    } catch (err) { next(err) }
+})
+
+// GET /api/role-play/history/trainee/:traineeId
+router.get('/history/trainee/:traineeId', authenticate, authorize('trainer', 'admin'), async (req, res, next) => {
+    try {
+        const attempts = await getHistory({
+            traineeId: req.params.traineeId,
+            courseId: req.query.course_id,
+            lessonId: req.query.lesson_id,
+        })
+        res.json({ success: true, attempts: attempts.map(formatAttempt) })
     } catch (err) { next(err) }
 })
 

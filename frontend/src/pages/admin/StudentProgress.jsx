@@ -14,6 +14,7 @@ import {
     Users, TrendingUp, Award, AlertTriangle, Search,
     ChevronDown, ChevronUp, CheckCircle, Clock, BookOpen,
     RefreshCw, Activity, XCircle, Minus, Mic, FileText,
+    History,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
 
@@ -143,8 +144,78 @@ function CourseRow({ course }) {
 }
 
 // ── Student row ───────────────────────────────────────────────────────────────
+function HistoryRow({ item }) {
+    const isRoleplay = item.type === 'roleplay'
+    const isAssessment = item.type === 'assessment'
+    const Icon = isRoleplay ? Users : isAssessment ? FileText : BookOpen
+    const tone =
+        isRoleplay && item.passed ? 'bg-green-50 text-green-700' :
+            isAssessment && item.passed ? 'bg-green-50 text-green-700' :
+                item.type === 'lesson' && item.status === 'completed' ? 'bg-green-50 text-green-700' :
+                    'bg-gray-100 text-gray-600'
+    const label = isRoleplay ? 'Roleplay' : isAssessment ? 'Assessment' : 'Lesson'
+
+    return (
+        <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+            <div className="flex items-start gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${tone}`}>
+                    <Icon size={15} />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                            <p className="text-sm font-semibold text-gray-800 truncate">{item.title}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                                {label} - {item.course_title || 'Unknown course'}
+                                {item.module_title ? ` - ${item.module_title}` : ''}
+                                {item.date ? ` - ${relativeTime(item.date)}` : ''}
+                            </p>
+                        </div>
+                        {item.score != null && <ScoreBadge score={item.score} size="sm" />}
+                    </div>
+
+                    {isRoleplay && item.feedback && (
+                        <p className="text-xs text-gray-600 mt-2 line-clamp-2">{item.feedback}</p>
+                    )}
+                    {isRoleplay && item.responses?.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                            {item.responses.slice(0, 2).map((response, idx) => (
+                                <p key={idx} className="text-xs text-gray-500 bg-white border border-gray-100 rounded-lg px-2 py-1 line-clamp-2">
+                                    {response.answer}
+                                </p>
+                            ))}
+                        </div>
+                    )}
+                    {item.type === 'lesson' && (
+                        <p className="text-xs text-gray-500 mt-2">{item.watch_percent || 0}% watched - {item.status}</p>
+                    )}
+                </div>
+            </div>
+        </div>
+    )
+}
+
+function StudentHistory({ history }) {
+    const timeline = history?.timeline || []
+    if (!timeline.length) {
+        return (
+            <div className="text-center py-8 text-gray-400">
+                <History size={28} className="mx-auto mb-2 opacity-40" />
+                <p className="text-sm">No roleplay, assessment, or module history yet</p>
+            </div>
+        )
+    }
+
+    return (
+        <div className="space-y-2">
+            {timeline.map(item => <HistoryRow key={`${item.type}-${item.id}`} item={item} />)}
+        </div>
+    )
+}
+
 function StudentRow({ student }) {
     const [expanded, setExpanded] = useState(false)
+    const [activeTab, setActiveTab] = useState('courses')
     const st = student.summary
     const statusCfg = STATUS[st.status] || STATUS.not_started
     const { Icon: StatusIcon } = statusCfg
@@ -236,11 +307,34 @@ function StudentRow({ student }) {
 
             {/* Expanded course breakdown */}
             {expanded && (
-                <div className="border-t border-gray-100 px-5 py-4 bg-white space-y-2">
-                    {student.courses.length === 0 ? (
+                <div className="border-t border-gray-100 px-5 py-4 bg-white space-y-3">
+                    <div className="flex gap-2">
+                        {[
+                            { key: 'courses', label: 'Courses', Icon: BookOpen },
+                            { key: 'history', label: 'History', Icon: History },
+                        ].map(({ key, label, Icon }) => (
+                            <button
+                                key={key}
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    setActiveTab(key)
+                                }}
+                                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${activeTab === key
+                                    ? 'bg-brand-500 text-white border-brand-500'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:text-brand-600 hover:border-brand-200'
+                                    }`}
+                            >
+                                <Icon size={12} /> {label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {activeTab === 'history' ? (
+                        <StudentHistory history={student.history} />
+                    ) : student.courses.length === 0 ? (
                         <p className="text-sm text-gray-400 text-center py-2">Not enrolled in any courses</p>
                     ) : (
-                        <>
+                        <div className="space-y-2">
                             <div className="flex items-center gap-4 px-3 mb-1">
                                 <p className="flex-1 text-xs font-semibold text-gray-400 uppercase tracking-wide">Course</p>
                                 <p className="w-28 text-xs font-semibold text-gray-400 text-center uppercase tracking-wide flex-shrink-0">Progress</p>
@@ -252,7 +346,7 @@ function StudentRow({ student }) {
                             {student.courses.map(course => (
                                 <CourseRow key={course.course_id} course={course} />
                             ))}
-                        </>
+                        </div>
                     )}
                 </div>
             )}
