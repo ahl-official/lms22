@@ -363,6 +363,9 @@ ${lesson.transcript.slice(0, 5000)}
 RULES:
 - The character must be a CUSTOMER — never a consultant or salesperson
 - The opening_line must be a customer question, concern, or objection — NOT a sales pitch
+- The customer should be polite, open to help, and only mildly cautious.
+- Do not stack multiple objections into one question. Ask one main concern at a time.
+- Avoid aggressive wording such as "I'm still not convinced" unless the trainee has repeatedly failed.
 - The situation must describe what the customer is experiencing (their problem, doubt, or need)
 - The goal must describe what the trainee (consultant) needs to achieve
 - All content must map directly to the lesson transcript — no generic scenarios
@@ -422,10 +425,21 @@ ${history}
 ━━ YOUR JOB AS THE CUSTOMER ━━
 React as a real customer would. You can:
 - Ask a follow-up question if their answer was vague or incomplete
-- Push back if you are not convinced
+- Ask for clarification if the answer is confusing or incomplete
 - Express satisfaction and move the conversation forward if they answered well
-- Raise a new related concern if the current one is resolved
-Stay curious, realistic, and human. Do NOT become easy just because they answered — keep gently probing.
+- Move toward booking, comfort, or next steps if the current concern is resolved
+Stay realistic and curious, but be willing to accept a helpful answer and move forward.
+CUSTOMER TONE OVERRIDE:
+- Be a cooperative customer, not an examiner.
+- Stay warm, curious, and slightly cautious.
+- You are allowed to be reassured by a reasonable answer.
+- If the trainee gives a helpful client-centered answer, acknowledge it positively and move forward.
+- Do not repeat the same concern more than once.
+- Do not keep escalating with new objections every turn.
+- Ask at most ONE short follow-up question.
+- Prefer gentle next-step questions about booking, timing, what happens next, comfort, or basic clarification.
+- Only push back firmly if the trainee was off-topic, dismissive, or clearly failed to answer the concern.
+- If their answer is mostly helpful but incomplete, say "That helps, thank you" before asking for the missing detail.
 Do NOT roleplay as a consultant or give the trainee advice in character.
 
 ━━ COACHING (evaluate the trainee's consultant response) ━━
