@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { analyticsAPI, categoriesAPI } from '../../services/api'
 import ScoreBadge from '../../components/ScoreBadge'
-import { Users, BookOpen, GraduationCap, Mic, TrendingUp, Award, Tag, Briefcase, Wrench } from 'lucide-react'
+import { Users, BookOpen, GraduationCap, Mic, TrendingUp, Award, Tag, Briefcase, Wrench, MessageSquare, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 export default function AdminOverview() {
@@ -30,7 +30,9 @@ export default function AdminOverview() {
     { label: 'Trainees', value: stats.trainees || 0, icon: GraduationCap, color: 'text-sage-600', bg: 'bg-sage-50' },
     { label: 'Published Courses', value: stats.published_courses || 0, icon: BookOpen, color: 'text-amber-500', bg: 'bg-amber-50' },
     { label: 'Voice Attempts', value: stats.voice_attempts || 0, icon: Mic, color: 'text-coral-500', bg: 'bg-coral-50' },
+    { label: 'Roleplay Attempts', value: stats.roleplay_attempts || 0, icon: MessageSquare, color: 'text-blue-500', bg: 'bg-blue-50' },
     { label: 'Enrollments', value: stats.total_enrollments || 0, icon: TrendingUp, color: 'text-blue-500', bg: 'bg-blue-50' },
+    { label: 'Roleplay Locks', value: stats.roleplay_locks || 0, icon: AlertTriangle, color: 'text-red-500', bg: 'bg-red-50' },
     { label: 'Avg Pass Rate', value: `${stats.avg_pass_rate || 0}%`, icon: Award, color: 'text-purple-500', bg: 'bg-purple-50' },
   ]
 

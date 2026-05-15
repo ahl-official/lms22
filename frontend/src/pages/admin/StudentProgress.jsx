@@ -64,6 +64,12 @@ function StatTile({ icon: Icon, label, value, sub, iconClass }) {
 
 // ── Course row (inside expanded student) ──────────────────────────────────────
 function CourseRow({ course }) {
+    const assessment = course.assessment || {
+        attempt_count: course.attempt_count || 0,
+        best_score: course.best_score ?? null,
+        last_attempt_at: course.last_attempt_at || null,
+    }
+    const roleplay = course.roleplay || { attempt_count: 0, best_score: null, locked_count: 0 }
     const progressColor =
         course.progress >= 80 ? 'bg-green-400' :
             course.progress >= 40 ? 'bg-brand-400' : 'bg-gray-300'
@@ -79,12 +85,19 @@ function CourseRow({ course }) {
             {/* Course title */}
             <div className="flex-1 min-w-0">
                 <p className="font-medium text-gray-800 truncate">{course.course_title}</p>
-                {course.last_attempt_at && (
+                {assessment.last_attempt_at && (
                     <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
                         {course.last_attempt_type === 'voice'
                             ? <Mic size={10} className="flex-shrink-0" />
                             : <FileText size={10} className="flex-shrink-0" />}
-                        Last attempt {relativeTime(course.last_attempt_at)}
+                        Assessment {relativeTime(assessment.last_attempt_at)}
+                    </p>
+                )}
+                {roleplay.last_attempt_at && (
+                    <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
+                        <Users size={10} className="flex-shrink-0" />
+                        Roleplay {relativeTime(roleplay.last_attempt_at)}
+                        {roleplay.last_lesson_title ? ` · ${roleplay.last_lesson_title}` : ''}
                     </p>
                 )}
             </div>
@@ -105,6 +118,20 @@ function CourseRow({ course }) {
                     ? <ScoreBadge score={course.best_score} size="sm" />
                     : <span className="text-xs text-gray-300">—</span>
                 }
+            </div>
+
+            {/* Roleplay */}
+            <div className="w-24 flex-shrink-0 text-center">
+                <p className="text-xs text-gray-400">{roleplay.attempt_count || 0} RP</p>
+                <div className="mt-1 flex items-center justify-center gap-1">
+                    {roleplay.best_score != null
+                        ? <ScoreBadge score={roleplay.best_score} size="sm" />
+                        : <span className="text-xs text-gray-300">-</span>
+                    }
+                    {roleplay.locked_count > 0 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">Locked</span>
+                    )}
+                </div>
             </div>
 
             {/* Status */}
@@ -217,8 +244,9 @@ function StudentRow({ student }) {
                             <div className="flex items-center gap-4 px-3 mb-1">
                                 <p className="flex-1 text-xs font-semibold text-gray-400 uppercase tracking-wide">Course</p>
                                 <p className="w-28 text-xs font-semibold text-gray-400 text-center uppercase tracking-wide flex-shrink-0">Progress</p>
-                                <p className="w-14 text-xs font-semibold text-gray-400 text-center uppercase tracking-wide flex-shrink-0">Attempts</p>
+                                <p className="w-14 text-xs font-semibold text-gray-400 text-center uppercase tracking-wide flex-shrink-0">Assess</p>
                                 <p className="w-14 text-xs font-semibold text-gray-400 text-right uppercase tracking-wide flex-shrink-0">Best</p>
+                                <p className="w-24 text-xs font-semibold text-gray-400 text-center uppercase tracking-wide flex-shrink-0">Roleplay</p>
                                 <p className="w-20 text-xs font-semibold text-gray-400 text-right uppercase tracking-wide flex-shrink-0">Status</p>
                             </div>
                             {student.courses.map(course => (
@@ -302,7 +330,7 @@ export default function AdminStudentProgress() {
             </div>
 
             {/* Stat tiles */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
                 <StatTile
                     icon={Users}
                     label="Total students"
@@ -318,16 +346,30 @@ export default function AdminStudentProgress() {
                 />
                 <StatTile
                     icon={Award}
-                    label="Avg score"
+                    label="Avg assessment"
                     value={stats.avg_score != null ? `${stats.avg_score}%` : '—'}
                     sub={stats.avg_completion != null ? `${stats.avg_completion}% avg progress` : undefined}
                     iconClass="bg-amber-50 text-amber-500"
+                />
+                <StatTile
+                    icon={Mic}
+                    label="Avg roleplay"
+                    value={stats.avg_roleplay_score != null ? `${stats.avg_roleplay_score}%` : 'â€”'}
+                    sub={stats.roleplay_attempts != null ? `${stats.roleplay_attempts} attempts` : undefined}
+                    iconClass="bg-coral-50 text-coral-500"
                 />
                 <StatTile
                     icon={AlertTriangle}
                     label="At risk"
                     value={stats.struggling_count ?? '—'}
                     sub="Score below 50% with attempts"
+                    iconClass="bg-red-50 text-red-500"
+                />
+                <StatTile
+                    icon={XCircle}
+                    label="Roleplay locks"
+                    value={stats.roleplay_locked_count ?? 'â€”'}
+                    sub="Manual unlock needed"
                     iconClass="bg-red-50 text-red-500"
                 />
             </div>

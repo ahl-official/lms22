@@ -1,20 +1,15 @@
-// frontend/src/components/RolePlay/index.jsx
-// Trainee responds via text OR voice recording.
-// AI replies as a character (text only — no TTS).
-// Audio is transcribed server-side via AssemblyAI.
-
 import { useState, useRef, useEffect, useCallback } from 'react'
 import {
-    Send, RefreshCw, Award, Loader2, Users, Target,
-    ChevronDown, ChevronUp, ThumbsUp, Lightbulb,
-    Trophy, RotateCcw, Star, AlertCircle, Mic, Type,
-    Square, Lock,
+    Mic, RefreshCw, Award, Loader2, Users, Target,
+    Trophy, RotateCcw, Star, AlertCircle, Square, Lock,
+    Volume2, CheckCircle, MessageSquare,
 } from 'lucide-react'
 import { rolePlayAPI } from '../../services/api'
 import useVoiceRecorder from '../../hooks/useVoiceRecorder'
 import toast from 'react-hot-toast'
 
-// ── Scenario types ────────────────────────────────────────────────────────────
+const MAX_ROLEPLAY_QUESTIONS = 5
+
 const SCENARIO_TYPES = [
     { key: 'objection', label: 'Objection Handling', desc: 'Customer raises concerns about price, timing, or trust', activeClass: 'border-coral-400 bg-coral-50 text-coral-700' },
     { key: 'consultation', label: 'Needs Assessment', desc: 'Understand what the customer actually needs', activeClass: 'border-brand-400 bg-brand-50 text-brand-700' },
@@ -22,51 +17,116 @@ const SCENARIO_TYPES = [
     { key: 'closing', label: 'Closing the Deal', desc: 'Convert an interested prospect into a commitment', activeClass: 'border-sage-500 bg-sage-50 text-sage-700' },
 ]
 
-// ── CoachingNote ──────────────────────────────────────────────────────────────
-function CoachingNote({ coaching, isLatest }) {
-    const [open, setOpen] = useState(isLatest)
-    if (!coaching) return null
+const speak = (text) => new Promise(resolve => {
+    if (!text || typeof window === 'undefined' || !window.speechSynthesis) return resolve()
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.rate = 0.95
+    utterance.pitch = 1
+    utterance.onend = resolve
+    utterance.onerror = resolve
+    window.speechSynthesis.speak(utterance)
+})
 
-    const cfg = {
-        positive: { bg: 'bg-green-50 border-green-200', text: 'text-green-800', accent: 'text-green-600' },
-        constructive: { bg: 'bg-amber-50 border-amber-200', text: 'text-amber-800', accent: 'text-amber-600' },
-        corrective: { bg: 'bg-red-50   border-red-200', text: 'text-red-800', accent: 'text-red-600' },
-    }[coaching.tier || 'constructive'] || { bg: 'bg-gray-50 border-gray-200', text: 'text-gray-700', accent: 'text-gray-500' }
-
+function ProgressDots({ count }) {
     return (
-        <div className={`rounded-xl border text-xs overflow-hidden ${cfg.bg} ${cfg.text}`}>
-            <button onClick={() => setOpen(o => !o)} className="w-full flex items-center gap-2 px-3 py-2 text-left">
-                <Lightbulb size={11} className={`flex-shrink-0 ${cfg.accent}`} />
-                <span className="font-semibold flex-1">Coach · {coaching.score}/10</span>
-                {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-            </button>
-            {open && (
-                <div className="px-3 pb-3 pt-1 space-y-2 border-t border-current border-opacity-20">
-                    {coaching.what_worked && (
-                        <p className="flex items-start gap-1.5">
-                            <ThumbsUp size={11} className="flex-shrink-0 mt-0.5" />
-                            <span>{coaching.what_worked}</span>
-                        </p>
-                    )}
-                    {coaching.tip && (
-                        <p className="flex items-start gap-1.5 font-medium">
-                            <span className="flex-shrink-0">→</span>
-                            <span>{coaching.tip}</span>
-                        </p>
-                    )}
-                </div>
-            )}
+        <div className="space-y-2">
+            <div className="flex items-center gap-2">
+                {[...Array(MAX_ROLEPLAY_QUESTIONS)].map((_, i) => (
+                    <div
+                        key={i}
+                        className={`flex-1 h-1.5 rounded-full transition-colors ${i < count ? 'bg-brand-500' : i === count ? 'bg-brand-300' : 'bg-gray-200'}`}
+                    />
+                ))}
+            </div>
+            <p className="text-xs text-gray-400 text-center">
+                Question {Math.min(count + 1, MAX_ROLEPLAY_QUESTIONS)} of {MAX_ROLEPLAY_QUESTIONS}
+            </p>
         </div>
     )
 }
 
-// ── SummaryScreen ─────────────────────────────────────────────────────────────
+function VoiceInput({ onSubmit, disabled }) {
+    const { state, formattedDuration, audioBlob, audioUrl, isRecording, isStopped, startRecording, stopRecording, reset, STATES } = useVoiceRecorder()
+    const [submitting, setSubmitting] = useState(false)
+
+    const handleSubmit = async () => {
+        if (!audioBlob || submitting) return
+        setSubmitting(true)
+        try {
+            await onSubmit(audioBlob)
+            reset()
+        } finally {
+            setSubmitting(false)
+        }
+    }
+
+    if (isStopped && audioUrl) {
+        return (
+            <div className="space-y-2">
+                <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
+                    <div className="flex items-center gap-2 mb-2">
+                        <Mic size={13} className="text-brand-500" />
+                        <span className="text-xs font-semibold text-gray-600">Recording ({formattedDuration})</span>
+                    </div>
+                    <audio controls src={audioUrl} className="w-full h-8" style={{ height: '32px' }} />
+                </div>
+                <div className="flex gap-2">
+                    <button onClick={reset} disabled={submitting} className="btn-secondary flex items-center gap-1.5 text-sm py-2 flex-1 justify-center">
+                        <RotateCcw size={13} /> Re-record
+                    </button>
+                    <button onClick={handleSubmit} disabled={submitting} className="btn-primary flex items-center gap-1.5 text-sm py-2 flex-1 justify-center">
+                        {submitting
+                            ? <><Loader2 size={13} className="animate-spin" /> Sending...</>
+                            : <><CheckCircle size={13} /> Submit Answer</>
+                        }
+                    </button>
+                </div>
+            </div>
+        )
+    }
+
+    if (isRecording) {
+        return (
+            <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-xl">
+                <button
+                    onClick={stopRecording}
+                    className="w-10 h-10 rounded-full bg-red-500 text-white flex items-center justify-center flex-shrink-0 hover:bg-red-600 transition-colors"
+                    title="Stop recording"
+                >
+                    <Square size={14} fill="white" />
+                </button>
+                <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                        <span className="text-sm font-semibold text-red-700">Recording... {formattedDuration}</span>
+                    </div>
+                    <p className="text-xs text-red-500 mt-0.5">Tap the square to stop</p>
+                </div>
+            </div>
+        )
+    }
+
+    return (
+        <button
+            onClick={startRecording}
+            disabled={disabled || state === STATES.requesting}
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold text-sm transition-colors disabled:opacity-50"
+        >
+            {state === STATES.requesting
+                ? <><Loader2 size={15} className="animate-spin" /> Requesting mic...</>
+                : <><Mic size={15} /> Record Answer</>
+            }
+        </button>
+    )
+}
+
 function SummaryScreen({ summary, onRestart }) {
     const score = summary.overall_score ?? 0
     const progress = summary.role_play_progress
     const cfg =
-        score >= 80 ? { color: 'text-green-600', bg: 'bg-green-50', border: 'border-green-100' } :
-            score >= 60 ? { color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-100' } :
+        score >= 70 ? { color: 'text-green-600', bg: 'bg-green-50', border: 'border-green-100' } :
+            score >= 55 ? { color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-100' } :
                 { color: 'text-red-500', bg: 'bg-red-50', border: 'border-red-100' }
 
     return (
@@ -104,7 +164,7 @@ function SummaryScreen({ summary, onRestart }) {
                         <p className="text-xs mt-1">
                             {progress.exhausted
                                 ? 'Contact trainer to unlock test as failed 10 times.'
-                                : 'Score 80% or higher to unlock the assessment.'}
+                                : `Score ${progress.threshold}% or higher to unlock the assessment.`}
                         </p>
                     )}
                 </div>
@@ -138,20 +198,6 @@ function SummaryScreen({ summary, onRestart }) {
                 </div>
             )}
 
-            {summary.best_moment && (
-                <div className="p-3 bg-brand-50 rounded-xl border border-brand-100">
-                    <p className="text-xs font-bold text-brand-700 mb-1">Best moment</p>
-                    <p className="text-sm text-brand-600 italic">"{summary.best_moment}"</p>
-                </div>
-            )}
-
-            {summary.recommended_focus && (
-                <div className="p-3 bg-gray-50 rounded-xl border border-gray-200">
-                    <p className="text-xs font-bold text-gray-600 mb-1">Focus for next practice</p>
-                    <p className="text-sm text-gray-700">{summary.recommended_focus}</p>
-                </div>
-            )}
-
             <button onClick={onRestart} className="btn-primary w-full flex items-center justify-center gap-2">
                 <RotateCcw size={15} /> Practice Again
             </button>
@@ -159,221 +205,63 @@ function SummaryScreen({ summary, onRestart }) {
     )
 }
 
-// ── VoiceInput ────────────────────────────────────────────────────────────────
-function VoiceInput({ onSubmit, disabled }) {
-    const { state, formattedDuration, audioBlob, audioUrl, isRecording, isStopped, startRecording, stopRecording, reset, STATES } = useVoiceRecorder()
-    const [submitting, setSubmitting] = useState(false)
-
-    const handleSubmit = async () => {
-        if (!audioBlob || submitting) return
-        setSubmitting(true)
-        try {
-            await onSubmit(audioBlob)
-            reset()
-        } catch (err) {
-            // error handled upstream
-        } finally {
-            setSubmitting(false)
-        }
-    }
-
-    if (isStopped && audioUrl) {
-        return (
-            <div className="space-y-2">
-                <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
-                    <div className="flex items-center gap-2 mb-2">
-                        <Mic size={13} className="text-brand-500" />
-                        <span className="text-xs font-semibold text-gray-600">Recording ({formattedDuration})</span>
-                    </div>
-                    <audio controls src={audioUrl} className="w-full h-8" style={{ height: '32px' }} />
-                </div>
-                <div className="flex gap-2">
-                    <button onClick={reset} disabled={submitting} className="btn-secondary flex items-center gap-1.5 text-sm py-2 flex-1 justify-center">
-                        <RotateCcw size={13} /> Re-record
-                    </button>
-                    <button onClick={handleSubmit} disabled={submitting} className="btn-primary flex items-center gap-1.5 text-sm py-2 flex-1 justify-center">
-                        {submitting
-                            ? <><Loader2 size={13} className="animate-spin" /> Sending…</>
-                            : <><Send size={13} /> Send</>
-                        }
-                    </button>
-                </div>
-            </div>
-        )
-    }
-
-    if (isRecording) {
-        return (
-            <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-xl">
-                <button
-                    onClick={stopRecording}
-                    className="w-10 h-10 rounded-full bg-red-500 text-white flex items-center justify-center flex-shrink-0 hover:bg-red-600 transition-colors"
-                    title="Stop recording"
-                >
-                    <Square size={14} fill="white" />
-                </button>
-                <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
-                        <span className="text-sm font-semibold text-red-700">Recording… {formattedDuration}</span>
-                    </div>
-                    <p className="text-xs text-red-500 mt-0.5">Tap the square to stop</p>
-                </div>
-            </div>
-        )
-    }
-
-    return (
-        <button
-            onClick={startRecording}
-            disabled={disabled || state === STATES.requesting}
-            className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold text-sm transition-colors disabled:opacity-50"
-        >
-            {state === STATES.requesting
-                ? <><Loader2 size={15} className="animate-spin" /> Requesting mic…</>
-                : <><Mic size={15} /> Tap to Record</>
-            }
-        </button>
-    )
-}
-
-// ── Main component ────────────────────────────────────────────────────────────
 export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
     const [scenarioType, setScenarioType] = useState('objection')
     const [scenario, setScenario] = useState(null)
     const [conversation, setConversation] = useState([])
-    // message: { role:'user'|'character', content:string, coaching?:object, source?:'text'|'voice' }
-    const [inputMode, setInputMode] = useState('text') // 'text' | 'voice'
-    const [textInput, setTextInput] = useState('')
+    const [phase, setPhase] = useState('idle')
     const [starting, setStarting] = useState(false)
     const [loading, setLoading] = useState(false)
-    const [summarizing, setSummarizing] = useState(false)
     const [summary, setSummary] = useState(null)
     const [gateProgress, setGateProgress] = useState(progress)
-    const chatEndRef = useRef(null)
-    const textInputRef = useRef(null)
+    const [latestFeedback, setLatestFeedback] = useState(null)
+    const [latestTranscript, setLatestTranscript] = useState('')
+    const conversationRef = useRef([])
 
-    useEffect(() => {
-        setGateProgress(progress)
-    }, [progress])
-
-    useEffect(() => {
-        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }, [conversation, loading])
+    useEffect(() => setGateProgress(progress), [progress])
+    useEffect(() => { conversationRef.current = conversation }, [conversation])
+    useEffect(() => () => window.speechSynthesis?.cancel(), [])
 
     const reset = useCallback(() => {
-        setSummary(null); setScenario(null); setConversation([]); setTextInput('')
+        window.speechSynthesis?.cancel()
+        setSummary(null)
+        setScenario(null)
+        setConversation([])
+        setLatestFeedback(null)
+        setLatestTranscript('')
+        setPhase('idle')
     }, [])
 
-    const startScenario = async () => {
-        if (gateProgress?.exhausted && !gateProgress?.unlocked) {
-            toast.error('Contact trainer to unlock test as failed 10 times.')
-            return
-        }
-        setStarting(true)
-        reset()
-        try {
-            const res = await rolePlayAPI.startScenario({ lesson_id: lesson._id, scenario_type: scenarioType })
-            const sc = res.data.scenario
-            setScenario(sc)
-            setConversation([{ role: 'character', content: sc.opening_line, coaching: null }])
-            setTimeout(() => textInputRef.current?.focus(), 100)
-        } catch {
-            toast.error('Failed to start scenario — try again')
-        } finally {
-            setStarting(false)
-        }
-    }
-
-    // Shared: after getting a turn response, update conversation
-    const applyTurnResponse = (userContent, source, res) => {
-        setConversation(prev => [
-            ...prev.slice(0, -1), // remove optimistic user msg
-            { role: 'user', content: userContent, coaching: res.data.coaching, source },
-            { role: 'character', content: res.data.character_reply, coaching: null },
-        ])
-    }
-
-    const sendText = async () => {
-        if (!textInput.trim() || loading || !scenario) return
-        const msg = textInput.trim()
-        setTextInput('')
-
-        setConversation(prev => [...prev, { role: 'user', content: msg, coaching: null, source: 'text' }])
-        setLoading(true)
-
-        try {
-            const convoForApi = [...conversation, { role: 'user', content: msg }].map(m => ({ role: m.role, content: m.content }))
-            const res = await rolePlayAPI.sendTurn({
-                lesson_id: lesson._id,
-                scenario,
-                conversation: convoForApi.slice(0, -1),
-                user_message: msg,
-            })
-            applyTurnResponse(msg, 'text', res)
-        } catch {
-            toast.error('Failed to get response')
-            setConversation(prev => prev.slice(0, -1))
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    const sendAudio = async (audioBlob) => {
+    const finishSession = useCallback(async (conversationOverride = conversationRef.current) => {
         if (!scenario) return
-        setLoading(true)
-
-        // Optimistic placeholder while transcribing
-        setConversation(prev => [...prev, { role: 'user', content: '…transcribing…', coaching: null, source: 'voice', pending: true }])
-
-        try {
-            const formData = new FormData()
-            formData.append('audio', audioBlob, 'recording.webm')
-            formData.append('lesson_id', lesson._id)
-            formData.append('scenario', JSON.stringify(scenario))
-            formData.append('conversation', JSON.stringify(
-                [...conversation].map(m => ({ role: m.role, content: m.content }))
-            ))
-
-            const res = await rolePlayAPI.sendAudioTurn(formData)
-            const transcription = res.data.transcription
-
-            setConversation(prev => [
-                ...prev.slice(0, -1), // remove placeholder
-                { role: 'user', content: transcription, coaching: res.data.coaching, source: 'voice' },
-                { role: 'character', content: res.data.character_reply, coaching: null },
-            ])
-        } catch (err) {
-            toast.error(err.response?.data?.message || 'Could not process audio — try again')
-            setConversation(prev => prev.slice(0, -1))
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    const endSession = async () => {
-        if (conversation.filter(m => m.role === 'user').length < 2) {
-            toast.error('Have at least 2 exchanges before ending')
+        const userTurns = conversationOverride.filter(m => m.role === 'user').length
+        if (userTurns < 2) {
+            toast.error('Answer at least 2 customer questions before scoring')
             return
         }
-        setSummarizing(true)
+
+        setLoading(true)
+        setPhase('scoring')
         try {
             const res = await rolePlayAPI.getScenarioSummary({
                 lesson_id: lesson._id,
                 scenario,
-                conversation: conversation.map(m => ({ role: m.role, content: m.content })),
+                conversation: conversationOverride.map(m => ({ role: m.role, content: m.content })),
             })
             const nextSummary = res.data.summary
+
             try {
                 const progressRes = await rolePlayAPI.recordProgress({
                     lesson_id: lesson._id,
                     score: nextSummary.overall_score,
                     scenario_type: scenarioType,
+                    question_count: conversationOverride.filter(m => m.role === 'user').length,
                 })
                 const nextProgress = progressRes.data.progress
                 setGateProgress(nextProgress)
                 onProgressUpdate?.(nextProgress)
                 setSummary({ ...nextSummary, role_play_progress: nextProgress })
+                await speak(`Your roleplay score is ${nextSummary.overall_score} percent. ${nextSummary.summary || ''}`)
             } catch (err) {
                 const lockedProgress = err.response?.data?.progress
                 if (lockedProgress) {
@@ -387,13 +275,79 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
             }
         } catch {
             toast.error('Failed to generate summary')
+            setPhase('ready')
         } finally {
-            setSummarizing(false)
+            setLoading(false)
+        }
+    }, [lesson._id, loading, onProgressUpdate, scenario, scenarioType])
+
+    const startScenario = async () => {
+        if (gateProgress?.exhausted && !gateProgress?.unlocked) {
+            toast.error('Contact trainer to unlock test as failed 10 times.')
+            return
+        }
+
+        setStarting(true)
+        reset()
+        try {
+            const res = await rolePlayAPI.startScenario({ lesson_id: lesson._id, scenario_type: scenarioType })
+            const sc = res.data.scenario
+            const opening = { role: 'character', content: sc.opening_line, coaching: null }
+            setScenario(sc)
+            setConversation([opening])
+            setPhase('ready')
+            await speak(sc.opening_line)
+        } catch {
+            toast.error('Failed to start scenario. Try again')
+        } finally {
+            setStarting(false)
         }
     }
 
-    const handleKeyDown = (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText() }
+    const sendAudio = async (audioBlob) => {
+        if (!scenario || loading) return
+        setLoading(true)
+        setPhase('listening')
+        setLatestFeedback(null)
+        setLatestTranscript('')
+
+        try {
+            const formData = new FormData()
+            formData.append('audio', audioBlob, 'recording.webm')
+            formData.append('lesson_id', lesson._id)
+            formData.append('scenario', JSON.stringify(scenario))
+            formData.append('conversation', JSON.stringify(conversationRef.current.map(m => ({ role: m.role, content: m.content }))))
+
+            const res = await rolePlayAPI.sendAudioTurn(formData)
+            const transcription = res.data.transcription
+            const coaching = res.data.coaching
+            const reply = res.data.character_reply
+            const nextUserCount = conversationRef.current.filter(m => m.role === 'user').length + 1
+            const userMessage = { role: 'user', content: transcription, coaching, source: 'voice' }
+            const nextConversation = nextUserCount >= MAX_ROLEPLAY_QUESTIONS
+                ? [...conversationRef.current, userMessage]
+                : [...conversationRef.current, userMessage, { role: 'character', content: reply, coaching: null }]
+
+            setConversation(nextConversation)
+            conversationRef.current = nextConversation
+            setLatestTranscript(transcription)
+            setLatestFeedback(coaching)
+            setPhase('feedback')
+
+            const spokenFeedback = coaching?.spoken_feedback || coaching?.tip || ''
+            await speak(nextUserCount >= MAX_ROLEPLAY_QUESTIONS ? spokenFeedback : `${spokenFeedback} ${reply}`)
+
+            if (nextUserCount >= MAX_ROLEPLAY_QUESTIONS) {
+                await finishSession(nextConversation)
+            } else {
+                setPhase('ready')
+            }
+        } catch (err) {
+            toast.error(err.response?.data?.message || 'Could not process audio. Try again')
+            setPhase('ready')
+        } finally {
+            setLoading(false)
+        }
     }
 
     if (lesson.transcript_status !== 'ready' || !lesson.transcript) {
@@ -420,12 +374,11 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
         )
     }
 
-    // ── Scenario picker ──
     if (!scenario) {
         return (
             <div className="space-y-4">
                 <div>
-                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Choose a practice type</p>
+                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Choose a voice practice type</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {SCENARIO_TYPES.map(type => (
                             <button key={type.key} onClick={() => setScenarioType(type.key)}
@@ -441,24 +394,24 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
                 </div>
                 <button onClick={startScenario} disabled={starting} className="btn-primary w-full flex items-center justify-center gap-2">
                     {starting ? <Loader2 size={15} className="animate-spin" /> : <Users size={15} />}
-                    {starting ? 'Setting up scenario…' : 'Start Practice Session'}
+                    {starting ? 'Setting up scenario...' : 'Start Voice Practice'}
                 </button>
                 <p className="text-xs text-gray-400 text-center">
-                    Score 80% to unlock assessment
-                    {gateProgress && !gateProgress.unlocked ? ` · ${gateProgress.attempts_remaining} attempts left` : ''}
-                    {' '}· respond by text or voice
+                    {MAX_ROLEPLAY_QUESTIONS} spoken questions max. Score {gateProgress?.threshold || 70}% to unlock assessment.
+                    {gateProgress && !gateProgress.unlocked ? ` ${gateProgress.attempts_remaining} attempts left.` : ''}
                 </p>
             </div>
         )
     }
 
-    // ── Active session ──
     const userTurnCount = conversation.filter(m => m.role === 'user').length
-    const latestUserIdx = conversation.map((m, i) => m.role === 'user' ? i : -1).filter(i => i !== -1).at(-1)
+    const currentPrompt = [...conversation].reverse().find(m => m.role === 'character')?.content || scenario.opening_line
+    const feedbackTier = latestFeedback?.tier || 'constructive'
 
     return (
-        <div className="space-y-3">
-            {/* Scenario card */}
+        <div className="space-y-4">
+            <ProgressDots count={userTurnCount} />
+
             <div className="bg-brand-50 border border-brand-200 rounded-2xl p-4">
                 <div className="flex items-start gap-3">
                     <div className="w-10 h-10 rounded-full bg-brand-500 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
@@ -478,118 +431,77 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
                 </div>
             </div>
 
-            {/* Chat */}
-            <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                {conversation.map((msg, i) => (
-                    <div key={i} className={`flex items-start gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        {msg.role === 'character' && (
-                            <div className="w-7 h-7 rounded-full bg-brand-500 flex items-center justify-center text-white font-bold text-xs flex-shrink-0 mt-0.5">
-                                {scenario.character_name?.charAt(0)}
-                            </div>
-                        )}
-                        <div className="max-w-[82%] space-y-1.5">
-                            <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user'
-                                ? 'bg-brand-500 text-white rounded-br-sm'
-                                : 'bg-white border border-gray-200 text-gray-800 rounded-bl-sm shadow-sm'
-                                } ${msg.pending ? 'opacity-60 italic' : ''}`}>
-                                {/* Show mic icon for voice messages */}
-                                {msg.role === 'user' && msg.source === 'voice' && !msg.pending && (
-                                    <span className="inline-flex items-center gap-1 text-white/70 text-xs mb-1 mr-1">
-                                        <Mic size={10} />
-                                    </span>
-                                )}
-                                {msg.content}
-                            </div>
-                            {msg.role === 'user' && msg.coaching && (
-                                <CoachingNote coaching={msg.coaching} isLatest={i === latestUserIdx} />
-                            )}
-                        </div>
+            <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
+                <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-brand-500 flex items-center justify-center flex-shrink-0">
+                        <Volume2 size={17} className="text-white" />
                     </div>
-                ))}
-
-                {loading && (
-                    <div className="flex items-center gap-2 pl-9">
-                        <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-2 shadow-sm">
-                            <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-                            <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-                            <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-                        </div>
+                    <div className="flex-1">
+                        <p className="text-xs font-semibold text-brand-600 mb-1">Customer question</p>
+                        <p className="text-sm text-gray-800 leading-relaxed">{currentPrompt}</p>
+                        <button
+                            onClick={() => speak(currentPrompt)}
+                            className="mt-3 text-xs text-brand-600 font-semibold hover:underline"
+                        >
+                            Replay question
+                        </button>
                     </div>
-                )}
-                <div ref={chatEndRef} />
+                </div>
             </div>
 
-            {/* Input mode toggle + input */}
-            <div className="space-y-2">
-                {/* Text / Voice toggle */}
-                <div className="flex items-center gap-2">
-                    <div className="flex bg-gray-100 rounded-xl p-0.5 gap-0.5">
-                        <button
-                            onClick={() => setInputMode('text')}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${inputMode === 'text' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                                }`}
-                        >
-                            <Type size={12} /> Text
-                        </button>
-                        <button
-                            onClick={() => setInputMode('voice')}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${inputMode === 'voice' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                                }`}
-                        >
-                            <Mic size={12} /> Voice
-                        </button>
-                    </div>
-                    <span className="text-xs text-gray-400">
-                        {inputMode === 'voice' ? 'Record your response' : 'Type your response'}
-                    </span>
+            {latestTranscript && (
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+                    <p className="text-xs font-semibold text-gray-500 mb-1 flex items-center gap-1.5">
+                        <MessageSquare size={12} /> Your last answer
+                    </p>
+                    <p className="text-sm text-gray-700 italic">"{latestTranscript}"</p>
                 </div>
+            )}
 
-                {/* Text input */}
-                {inputMode === 'text' && (
-                    <div className="flex gap-2">
-                        <textarea
-                            ref={textInputRef}
-                            value={textInput}
-                            onChange={e => setTextInput(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            placeholder="Your response… (Enter to send)"
-                            rows={2}
-                            className="input-field resize-none flex-1 text-sm"
-                            disabled={loading}
-                        />
-                        <button
-                            onClick={sendText}
-                            disabled={!textInput.trim() || loading}
-                            className="btn-primary px-4 self-stretch flex items-center justify-center disabled:opacity-40"
-                        >
-                            <Send size={16} />
-                        </button>
+            {latestFeedback && (
+                <div className={`rounded-xl border p-3 text-sm ${feedbackTier === 'positive'
+                    ? 'bg-green-50 border-green-200 text-green-800'
+                    : feedbackTier === 'corrective'
+                        ? 'bg-red-50 border-red-200 text-red-800'
+                        : 'bg-amber-50 border-amber-200 text-amber-800'
+                    }`}>
+                    <div className="flex items-center gap-2 mb-1">
+                        <Volume2 size={13} />
+                        <p className="font-semibold">AI voice feedback</p>
+                        {latestFeedback.score != null && <span className="ml-auto text-xs font-bold">{latestFeedback.score}/10</span>}
                     </div>
-                )}
-
-                {/* Voice input */}
-                {inputMode === 'voice' && (
-                    <VoiceInput onSubmit={sendAudio} disabled={loading} />
-                )}
-
-                {/* Session controls */}
-                <div className="flex gap-2">
-                    <button
-                        onClick={() => { setScenario(null); setConversation([]) }}
-                        className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5 flex-1"
-                    >
-                        <RefreshCw size={12} /> New Scenario
-                    </button>
-                    <button
-                        onClick={endSession}
-                        disabled={summarizing || userTurnCount < 2}
-                        className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5 flex-1 disabled:opacity-40"
-                        title={userTurnCount < 2 ? 'Have at least 2 exchanges first' : undefined}
-                    >
-                        {summarizing ? <Loader2 size={12} className="animate-spin" /> : <Award size={12} />}
-                        {summarizing ? 'Scoring…' : 'End & Get Score'}
-                    </button>
+                    <p className="text-xs leading-relaxed">{latestFeedback.tip || latestFeedback.what_worked}</p>
                 </div>
+            )}
+
+            {phase === 'scoring' ? (
+                <div className="bg-brand-50 border border-brand-200 rounded-2xl p-4 flex items-center gap-3">
+                    <Loader2 size={18} className="animate-spin text-brand-500" />
+                    <div>
+                        <p className="text-sm font-semibold text-brand-700">Scoring your roleplay...</p>
+                        <p className="text-xs text-brand-600">This attempt is ending after {MAX_ROLEPLAY_QUESTIONS} questions.</p>
+                    </div>
+                </div>
+            ) : (
+                <VoiceInput onSubmit={sendAudio} disabled={loading || userTurnCount >= MAX_ROLEPLAY_QUESTIONS} />
+            )}
+
+            <div className="flex gap-2">
+                <button
+                    onClick={reset}
+                    className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5 flex-1"
+                    disabled={loading}
+                >
+                    <RefreshCw size={12} /> New Scenario
+                </button>
+                <button
+                    onClick={() => finishSession()}
+                    disabled={loading || userTurnCount < 2}
+                    className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5 flex-1 disabled:opacity-40"
+                >
+                    {loading ? <Loader2 size={12} className="animate-spin" /> : <Award size={12} />}
+                    End & Get Score
+                </button>
             </div>
         </div>
     )

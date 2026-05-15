@@ -224,6 +224,7 @@ export default function LessonTestPanel({ lesson, onComplete, locked = false, ro
     if (locked) {
         const attemptsRemaining = rolePlayProgress?.attempts_remaining ?? 10
         const exhausted = rolePlayProgress?.exhausted
+        const threshold = rolePlayProgress?.threshold ?? 70
 
         return (
             <div className="text-center py-10">
@@ -236,7 +237,7 @@ export default function LessonTestPanel({ lesson, onComplete, locked = false, ro
                         ? 'Checking role playing score...'
                         : exhausted
                             ? 'Contact trainer to unlock test as failed 10 times.'
-                            : `Score 80% in Role Playing to unlock this assessment. ${attemptsRemaining} attempt${attemptsRemaining !== 1 ? 's' : ''} left.`}
+                            : `Score ${threshold}% in Role Playing to unlock this assessment. ${attemptsRemaining} attempt${attemptsRemaining !== 1 ? 's' : ''} left.`}
                 </p>
             </div>
         )

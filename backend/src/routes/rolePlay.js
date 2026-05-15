@@ -15,8 +15,9 @@ const { notifyRolePlayLocked } = require('../services/wahaService')
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } })
 const LLM = process.env.LLM_MODEL || 'openai/gpt-4o-mini'
-const PASSING_SCORE = 80
+const PASSING_SCORE = 70
 const MAX_ATTEMPTS = 10
+const MAX_SESSION_QUESTIONS = 5
 
 const callLLM = (messages, max_tokens = 600) =>
     axios.post(
@@ -56,6 +57,8 @@ const formatProgress = (progress) => {
         window_attempts_remaining: unlocked ? 0 : Math.max(0, windowLimit - attemptsUsed),
         best_score: progress?.best_score || 0,
         last_score: progress?.last_score ?? null,
+        last_scenario_type: progress?.last_scenario_type || null,
+        last_question_count: progress?.last_question_count || 0,
         passed: !!progress?.passed,
         unlocked_by_trainer: !!progress?.unlocked_by_trainer,
         unlocked,
@@ -110,7 +113,7 @@ router.get('/progress/:lessonId', authenticate, async (req, res, next) => {
 // POST /api/role-play/progress
 router.post('/progress', authenticate, async (req, res, next) => {
     try {
-        const { lesson_id, score } = req.body
+        const { lesson_id, score, scenario_type, question_count } = req.body
         const numericScore = Number(score)
 
         if (!lesson_id) return res.status(400).json({ success: false, message: 'lesson_id required' })
@@ -151,6 +154,8 @@ router.post('/progress', authenticate, async (req, res, next) => {
         progress.last_score = Math.max(0, Math.min(100, Math.round(numericScore)))
         progress.best_score = Math.max(progress.best_score || 0, progress.last_score)
         progress.last_attempt_at = new Date()
+        progress.last_scenario_type = scenario_type || progress.last_scenario_type
+        progress.last_question_count = Math.min(MAX_SESSION_QUESTIONS, Math.max(0, Number(question_count) || 0))
 
         if (progress.last_score >= PASSING_SCORE) {
             progress.passed = true
@@ -434,9 +439,17 @@ SCORING:
 5. Good — clearly applied the lesson's teaching to answer the customer → 6-8
 6. Excellent — answered with confidence, specifics, and full command of lesson content → 8-10
 
+Use this easier scoring override instead of the stricter scale above:
+- Blank, single-word, or completely off-topic answers can still receive 2-3.
+- Generic but relevant answers should receive 3-4.
+- Partial understanding should receive 5-6.
+- Good lesson application with minor gaps should receive 7-8.
+- Strong, specific lesson application should receive 9-10.
+
 The coaching tip MUST reference the lesson specifically:
 - If they answered well: name exactly what technique from the lesson they used correctly
 - If they missed it: tell them exactly what the lesson says they should have said or done
+- Include spoken_feedback as one short friendly sentence the trainee can hear aloud before the customer continues.
 
 Return ONLY valid JSON:
 {
@@ -445,6 +458,7 @@ Return ONLY valid JSON:
     "score": 5,
     "what_worked": "What the trainee did right as a consultant, referencing the lesson — or null if nothing worked",
     "tip": "What the lesson specifically teaches that the trainee should do differently or better",
+    "spoken_feedback": "Short spoken coaching feedback for the trainee.",
     "tier": "constructive"
   }
 }
@@ -571,6 +585,13 @@ SCORING:
 - Average — applied some lesson knowledge but inconsistently → 55-65
 - Good — clearly demonstrated the lesson's teachings → 65-80
 - Excellent — answered like a trained consultant with full command of lesson content → 80+
+
+Use this easier final scoring override instead of the stricter scale above:
+- Mostly evasive or ignored lesson content -> 35-50
+- Some effort but missed key lesson techniques -> 50-60
+- Average, with partial lesson knowledge -> 60-70
+- Good, clearly demonstrated the lesson's teachings -> 70-85
+- Excellent, confident and specific lesson application -> 85+
 
 Return ONLY valid JSON:
 {

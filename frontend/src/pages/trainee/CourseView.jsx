@@ -142,7 +142,7 @@ function LessonContent({ lesson, onComplete, onVideoEnd }) {
               <Users size={16} className="text-brand-500" />
               <h3 className="font-semibold text-gray-800">Role Playing Practice</h3>
             </div>
-            <span className="text-xs text-gray-400">Score 80% to unlock assessment</span>
+            <span className="text-xs text-gray-400">Score {rolePlayProgress?.threshold || 70}% to unlock assessment</span>
           </div>
           <RolePlayPanel
             lesson={lesson}
@@ -399,7 +399,7 @@ export default function CourseView() {
         </div>
         <h1 className="text-xl font-bold text-gray-800 mb-2">Course locked</h1>
         <p className="text-gray-500 text-sm max-w-md mx-auto">
-          You have used 10 role playing attempts without scoring 80%. Contact your trainer to unlock this course.
+          You have used 10 role playing attempts without reaching the required score. Contact your trainer to unlock this course.
         </p>
         {courseLock?.locked_progress?.lesson_id?.title && (
           <p className="text-xs text-gray-400 mt-3">

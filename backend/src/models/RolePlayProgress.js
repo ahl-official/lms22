@@ -30,6 +30,8 @@ const rolePlayProgressSchema = new mongoose.Schema(
     },
     trainer_unlock_note: { type: String, default: '' },
     last_attempt_at: { type: Date, default: null },
+    last_scenario_type: { type: String, default: null },
+    last_question_count: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

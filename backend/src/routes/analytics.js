@@ -5,6 +5,7 @@ const Module = require('../models/Module');
 const Test = require('../models/Test');
 const Enrollment = require('../models/Enrollment');
 const Attempt = require('../models/Attempt');
+const RolePlayProgress = require('../models/RolePlayProgress');
 const { authenticate, authorize } = require('../middleware/auth');
 
 // GET /api/analytics/overview
@@ -17,12 +18,14 @@ router.get('/overview', authenticate, authorize('admin', 'trainer'), async (req,
 
     const enrollFilter = trainerCourseIds ? { course_id: { $in: trainerCourseIds } } : {};
     const attemptFilter = trainerCourseIds ? { course_id: { $in: trainerCourseIds } } : {};
+    const rolePlayFilter = trainerCourseIds ? { course_id: { $in: trainerCourseIds } } : {};
 
     const [
       totalUsers, trainees, trainers,
       totalCourses, publishedCourses, voiceCourses,
       totalEnrollments, completedEnrollments,
       totalAttempts, voiceAttempts, passedAttempts,
+      rolePlayProgresses, rolePlayLocks,
     ] = await Promise.all([
       User.countDocuments({ is_active: true }),
       User.countDocuments({ role: 'trainee', is_active: true }),
@@ -35,7 +38,17 @@ router.get('/overview', authenticate, authorize('admin', 'trainer'), async (req,
       Attempt.countDocuments(attemptFilter),
       Attempt.countDocuments({ ...attemptFilter, test_type: 'voice' }),
       Attempt.countDocuments({ ...attemptFilter, score: { $gte: 60 } }),
+      RolePlayProgress.find(rolePlayFilter).select('attempts_used best_score').lean(),
+      RolePlayProgress.countDocuments({
+        ...rolePlayFilter,
+        passed: { $ne: true },
+        unlocked_by_trainer: { $ne: true },
+        attempts_used: { $gte: 10 },
+      }),
     ]);
+
+    const rolePlayAttempts = rolePlayProgresses.reduce((sum, p) => sum + (p.attempts_used || 0), 0);
+    const rolePlayScores = rolePlayProgresses.map(p => p.best_score).filter(s => s != null && s > 0);
 
     const topCourses = await Course.aggregate([
       { $match: trainerFilter },
@@ -85,6 +98,11 @@ router.get('/overview', authenticate, authorize('admin', 'trainer'), async (req,
         completed_enrollments: completedEnrollments,
         total_attempts: totalAttempts,
         voice_attempts: voiceAttempts,
+        roleplay_attempts: rolePlayAttempts,
+        roleplay_locks: rolePlayLocks,
+        avg_roleplay_score: rolePlayScores.length > 0
+          ? Math.round(rolePlayScores.reduce((s, v) => s + v, 0) / rolePlayScores.length)
+          : null,
         avg_pass_rate: totalAttempts > 0 ? Math.round((passedAttempts / totalAttempts) * 100) : 0,
       },
       top_courses: topCourses,
@@ -296,12 +314,16 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
     const since90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
     // ── Fetch enrollments + attempts in parallel ─────────────────────────────
-    const [enrollments, attempts] = await Promise.all([
+    const [enrollments, attempts, rolePlays] = await Promise.all([
       Enrollment.find({ trainee_id: { $in: traineeIds } })
         .populate('course_id', 'title')
         .lean(),
       Attempt.find({ trainee_id: { $in: traineeIds }, status: 'scored', submitted_at: { $gte: since90 } })
         .select('trainee_id course_id score submitted_at test_type passing_score')
+        .lean(),
+      RolePlayProgress.find({ trainee_id: { $in: traineeIds } })
+        .select('trainee_id course_id lesson_id attempts_used best_score last_score passed unlocked_by_trainer last_attempt_at last_scenario_type last_question_count')
+        .populate('lesson_id', 'title')
         .lean(),
     ]);
 
@@ -320,11 +342,19 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
       attemptByTrainee[tid].push(a);
     }
 
+    const rolePlayByTrainee = {};
+    for (const rp of rolePlays) {
+      const tid = rp.trainee_id.toString();
+      if (!rolePlayByTrainee[tid]) rolePlayByTrainee[tid] = [];
+      rolePlayByTrainee[tid].push(rp);
+    }
+
     // ── Build student summaries ──────────────────────────────────────────────
     const students = trainees.map(trainee => {
       const tid = trainee._id.toString();
       const traineeEnrols = enrollByTrainee[tid] || [];
       const traineeAttempts = attemptByTrainee[tid] || [];
+      const traineeRolePlays = rolePlayByTrainee[tid] || [];
 
       const totalCourses = traineeEnrols.length;
       const completedCourses = traineeEnrols.filter(e => e.status === 'completed').length;
@@ -336,12 +366,23 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
       const avgScore = scores.length > 0
         ? Math.round(scores.reduce((s, v) => s + v, 0) / scores.length)
         : null;
+      const rolePlayScores = traineeRolePlays.map(rp => rp.best_score).filter(s => s != null && s > 0);
+      const avgRolePlayScore = rolePlayScores.length > 0
+        ? Math.round(rolePlayScores.reduce((s, v) => s + v, 0) / rolePlayScores.length)
+        : null;
+      const rolePlayAttemptCount = traineeRolePlays.reduce((sum, rp) => sum + (rp.attempts_used || 0), 0);
+      const rolePlayLockedCount = traineeRolePlays.filter(rp =>
+        !rp.passed && !rp.unlocked_by_trainer && (rp.attempts_used || 0) >= 10
+      ).length;
 
       // Most recent activity: last login or last attempt, whichever is newer
       const latestAttemptDate = traineeAttempts.length > 0
         ? new Date(Math.max(...traineeAttempts.map(a => new Date(a.submitted_at))))
         : null;
-      const lastActiveAt = [trainee.last_login_at, latestAttemptDate]
+      const latestRolePlayDate = traineeRolePlays.filter(rp => rp.last_attempt_at).length > 0
+        ? new Date(Math.max(...traineeRolePlays.filter(rp => rp.last_attempt_at).map(rp => new Date(rp.last_attempt_at))))
+        : null;
+      const lastActiveAt = [trainee.last_login_at, latestAttemptDate, latestRolePlayDate]
         .filter(Boolean)
         .sort((a, b) => new Date(b) - new Date(a))[0] || null;
 
@@ -355,13 +396,21 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
       if (computedStatus === 'in_progress' && scores.length >= 2 && avgScore !== null && avgScore < 50) {
         computedStatus = 'struggling';
       }
+      if (rolePlayLockedCount > 0) computedStatus = 'struggling';
 
       // Per-course breakdown
       const courses = traineeEnrols.map(e => {
         const cid = (e.course_id?._id || e.course_id)?.toString();
         const courseAttempts = traineeAttempts.filter(a => a.course_id?.toString() === cid);
+        const courseRolePlays = traineeRolePlays.filter(rp => rp.course_id?.toString() === cid);
         const courseScores = courseAttempts.map(a => a.score).filter(s => s != null);
         const sorted = [...courseAttempts].sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
+        const sortedRolePlays = [...courseRolePlays].sort((a, b) => new Date(b.last_attempt_at || 0) - new Date(a.last_attempt_at || 0));
+        const roleBestScores = courseRolePlays.map(rp => rp.best_score).filter(s => s != null && s > 0);
+        const roleAttemptCount = courseRolePlays.reduce((sum, rp) => sum + (rp.attempts_used || 0), 0);
+        const lockedRolePlays = courseRolePlays.filter(rp =>
+          !rp.passed && !rp.unlocked_by_trainer && (rp.attempts_used || 0) >= 10
+        );
 
         return {
           course_id: cid,
@@ -376,6 +425,26 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
           last_attempt_at: sorted[0]?.submitted_at || null,
           last_attempt_type: sorted[0]?.test_type || null,
           passed: courseScores.some((s, i) => s >= (courseAttempts[i]?.passing_score || 60)),
+          assessment: {
+            attempt_count: courseAttempts.length,
+            best_score: courseScores.length > 0 ? Math.max(...courseScores) : null,
+            avg_score: courseScores.length > 0
+              ? Math.round(courseScores.reduce((s, v) => s + v, 0) / courseScores.length)
+              : null,
+            last_attempt_at: sorted[0]?.submitted_at || null,
+          },
+          roleplay: {
+            attempt_count: roleAttemptCount,
+            best_score: roleBestScores.length > 0 ? Math.max(...roleBestScores) : null,
+            avg_score: roleBestScores.length > 0
+              ? Math.round(roleBestScores.reduce((s, v) => s + v, 0) / roleBestScores.length)
+              : null,
+            passed_count: courseRolePlays.filter(rp => rp.passed || rp.unlocked_by_trainer).length,
+            locked_count: lockedRolePlays.length,
+            last_attempt_at: sortedRolePlays[0]?.last_attempt_at || null,
+            last_scenario_type: sortedRolePlays[0]?.last_scenario_type || null,
+            last_lesson_title: sortedRolePlays[0]?.lesson_id?.title || null,
+          },
         };
       }).sort((a, b) => (b.progress || 0) - (a.progress || 0));
 
@@ -391,7 +460,10 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
           completed_courses: completedCourses,
           avg_progress: avgProgress,
           avg_score: avgScore,
+          avg_roleplay_score: avgRolePlayScore,
           attempt_count: traineeAttempts.length,
+          roleplay_attempt_count: rolePlayAttemptCount,
+          roleplay_locked_count: rolePlayLockedCount,
           status: computedStatus,
         },
         courses,
@@ -402,7 +474,8 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
     const filtered = status ? students.filter(s => s.summary.status === status) : students;
 
     // ── Aggregate stats ──────────────────────────────────────────────────────
-    const allScores = filtered.flatMap(s => s.courses.map(c => c.avg_score).filter(v => v != null));
+    const allScores = filtered.flatMap(s => s.courses.map(c => c.assessment?.avg_score).filter(v => v != null));
+    const allRolePlayScores = filtered.flatMap(s => s.courses.map(c => c.roleplay?.avg_score).filter(v => v != null));
     const withCourses = filtered.filter(s => s.summary.total_courses > 0);
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
@@ -416,6 +489,12 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
       avg_score: allScores.length > 0
         ? Math.round(allScores.reduce((s, v) => s + v, 0) / allScores.length)
         : null,
+      avg_roleplay_score: allRolePlayScores.length > 0
+        ? Math.round(allRolePlayScores.reduce((s, v) => s + v, 0) / allRolePlayScores.length)
+        : null,
+      roleplay_attempts: filtered.reduce((sum, s) => sum + (s.summary.roleplay_attempt_count || 0), 0),
+      roleplay_locked_count: filtered.reduce((sum, s) => sum + (s.summary.roleplay_locked_count || 0), 0),
+      assessment_attempts: filtered.reduce((sum, s) => sum + (s.summary.attempt_count || 0), 0),
       avg_completion: withCourses.length > 0
         ? Math.round(withCourses.reduce((s, t) => s + t.summary.avg_progress, 0) / withCourses.length)
         : 0,
