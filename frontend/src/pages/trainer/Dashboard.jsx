@@ -3,7 +3,6 @@ import { analyticsAPI } from '../../services/api'
 import { useAuthStore } from '../../store/authStore'
 import { BookOpen, Users, BarChart2, Tag, History } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import LearningHistory from '../../components/LearningHistory'
 
 export default function TrainerDashboard() {
     const { user } = useAuthStore()
@@ -13,13 +12,7 @@ export default function TrainerDashboard() {
         queryFn: () => analyticsAPI.getOverview(),
     })
 
-    const { data: historyData, isLoading: historyLoading } = useQuery({
-        queryKey: ['trainer-learning-history'],
-        queryFn: () => analyticsAPI.getHistory({ limit: 8 }),
-    })
-
     const stats = data?.data?.stats || {}
-    const history = historyData?.data?.history || []
 
     return (
         <div className="p-6 max-w-5xl mx-auto">
@@ -70,29 +63,15 @@ export default function TrainerDashboard() {
                 </Link>
             </div>
 
-            <div className="card mt-8">
-                <div className="flex items-center justify-between gap-3 mb-4">
-                    <div className="flex items-center gap-2">
-                        <History size={17} className="text-coral-500" />
-                        <h2 className="font-semibold text-gray-800">Recent Learning History</h2>
-                    </div>
-                    <Link to="/trainer/trainees" className="text-xs font-semibold text-brand-600 hover:underline">
-                        View students
-                    </Link>
+            <Link to="/trainer/history" className="card mt-8 hover:shadow-md transition-shadow flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-brand-50 flex items-center justify-center flex-shrink-0">
+                    <History size={22} className="text-brand-500" />
                 </div>
-                {historyLoading ? (
-                    <div className="flex justify-center py-10">
-                        <div className="w-8 h-8 border-4 border-brand-100 border-t-brand-500 rounded-full animate-spin" />
-                    </div>
-                ) : (
-                    <LearningHistory
-                        items={history}
-                        showTrainee
-                        compact
-                        emptyText="No student history yet"
-                    />
-                )}
-            </div>
+                <div>
+                    <p className="font-semibold text-gray-800">Student History</p>
+                    <p className="text-sm text-gray-500">Open student roleplaying and assessment questions and answers</p>
+                </div>
+            </Link>
         </div>
     )
 }

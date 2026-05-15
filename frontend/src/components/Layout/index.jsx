@@ -15,7 +15,7 @@ const NAV = {
     { to: '/admin/trainers', label: 'Trainers', icon: Briefcase },
     { to: '/admin/courses', label: 'Courses', icon: BookOpen },
     { to: '/admin/progress', label: 'Student Progress', icon: TrendingUp },
-    { to: '/admin/history', label: 'History', icon: History },
+    { to: '/admin/history', label: 'Student History', icon: History },
     { to: '/admin/categories', label: 'Roles', icon: Tag },
     { to: '/admin/ai-settings', label: 'AI Settings', icon: Settings },
     { to: '/admin/whatsapp', label: 'WhatsApp Settings', icon: MessageCircle },
@@ -23,11 +23,12 @@ const NAV = {
   trainer: [
     { to: '/trainer', label: 'Dashboard', icon: LayoutDashboard, end: true },
     { to: '/trainer/trainees', label: 'My Students', icon: GraduationCap },
+    { to: '/trainer/history', label: 'Student History', icon: History },
     { to: '/trainer/analytics', label: 'Activities Review', icon: BarChart2 },
   ],
   trainee: [
     { to: '/trainee', label: 'My Courses', icon: BookOpen, end: true },
-    { to: '/trainee/history', label: 'History', icon: History },
+    { to: '/trainee/history', label: 'My History', icon: History },
   ],
 }
 

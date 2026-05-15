@@ -148,9 +148,8 @@ export const analyticsAPI = {
   getModuleStats: (courseId) => api.get(`/analytics/modules/course/${courseId}`),
   getModuleTrainees: (moduleId) => api.get(`/analytics/modules/${moduleId}/trainees`),
   getHistory: (params) => api.get('/analytics/history', { params }),
+  getStudentHistory: (params) => api.get('/analytics/student-history', { params }),
   getStudentProgress: (params) => api.get('/analytics/admin/student-progress', { params }),
-  getStudentProgress: (params) => api.get('/analytics/admin/student-progress', { params }),
-
 }
 
 export const voiceTestAPI = {

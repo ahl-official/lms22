@@ -21,6 +21,7 @@ const TrainerCreateCourse = lazy(() => import('./pages/trainer/CreateCourse'))
 const TrainerTrainees = lazy(() => import('./pages/trainer/Trainees'))
 const TrainerAnalytics = lazy(() => import('./pages/trainer/Analytics'))
 const TrainerRecommendations = lazy(() => import('./pages/trainer/Recommendations'))
+const TrainerHistory = lazy(() => import('./pages/trainer/History'))
 const MyCourses = lazy(() => import('./pages/trainee/MyCourses'))
 const TraineeHistory = lazy(() => import('./pages/trainee/History'))
 const CourseView = lazy(() => import('./pages/trainee/CourseView'))
@@ -71,6 +72,7 @@ export default function App() {
             <Route path="courses/new" element={<TrainerCreateCourse />} />
             <Route path="courses/:id/edit" element={<TrainerCreateCourse />} />
             <Route path="trainees" element={<TrainerTrainees />} />
+            <Route path="history" element={<TrainerHistory />} />
             <Route path="analytics" element={<TrainerAnalytics />} />
             <Route path="recommendations" element={<TrainerRecommendations />} />
           </Route>

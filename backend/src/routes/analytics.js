@@ -699,4 +699,150 @@ router.get('/history', authenticate, authorize('admin', 'trainer'), async (req, 
   } catch (err) { next(err); }
 });
 
+const roleplayPairs = (attempt) => {
+  const pairs = [];
+  let currentQuestion = attempt.scenario?.opening_line || '';
+
+  for (const turn of attempt.conversation || []) {
+    if (turn.role === 'character') {
+      currentQuestion = turn.content || currentQuestion;
+    } else if (turn.role === 'user') {
+      pairs.push({
+        question: currentQuestion || 'Customer question',
+        answer: turn.content || '',
+        score: turn.coaching?.score ?? null,
+        feedback: turn.coaching?.tip || turn.coaching?.spoken_feedback || turn.coaching?.what_worked || null,
+      });
+      currentQuestion = '';
+    }
+  }
+
+  return pairs;
+};
+
+const assessmentPairs = (attempt) => {
+  if (attempt.voice_transcript) {
+    const pairs = [];
+    const regex = /Q:\s*([\s\S]*?)\nA:\s*([\s\S]*?)(?=\n\nQ:|$)/g;
+    let match;
+    while ((match = regex.exec(attempt.voice_transcript)) !== null) {
+      pairs.push({
+        question: (match[1] || '').trim(),
+        answer: (match[2] || '').trim(),
+      });
+    }
+    if (pairs.length) return pairs;
+  }
+
+  const questions = Array.isArray(attempt.questions_snapshot)
+    ? attempt.questions_snapshot
+    : (attempt.test_id?.questions || []);
+  const answers = attempt.answers || {};
+
+  return questions.map((question, index) => ({
+    question: question.question || question.prompt || `Question ${index + 1}`,
+    answer: question.user_answer ?? answers[index] ?? answers[String(index)] ?? answers[question._id] ?? '',
+    correct_answer: question.correct_answer || null,
+  }));
+};
+
+// GET /api/analytics/student-history
+// Student-first drill-down for admin/trainer: trainee -> Roleplaying/Assessment -> Q&A.
+router.get('/student-history', authenticate, authorize('admin', 'trainer'), async (req, res, next) => {
+  try {
+    const trainerCourseIds = req.user.role === 'trainer'
+      ? (await Course.find({ created_by: req.user._id }).select('_id')).map(c => c._id)
+      : null;
+    const courseFilter = trainerCourseIds ? { course_id: { $in: trainerCourseIds } } : {};
+
+    const traineeFilter = {
+      is_active: { $ne: false },
+      $or: [{ role: 'trainee' }, { roles: 'trainee' }],
+    };
+
+    if (trainerCourseIds) {
+      const traineeIds = await Enrollment.distinct('trainee_id', { course_id: { $in: trainerCourseIds } });
+      traineeFilter._id = { $in: traineeIds };
+    }
+
+    const [trainees, roleplays, assessments] = await Promise.all([
+      User.find(traineeFilter)
+        .select('name email phone')
+        .sort({ name: 1 })
+        .limit(500)
+        .lean(),
+      RolePlayAttempt.find(courseFilter)
+        .select('trainee_id course_id module_id lesson_id scenario_type scenario conversation summary score grade passed question_count submitted_at')
+        .populate('course_id', 'title')
+        .populate('module_id', 'title order')
+        .populate('lesson_id', 'title')
+        .sort({ submitted_at: -1 })
+        .limit(3000)
+        .lean(),
+      Attempt.find({ ...courseFilter, status: 'scored' })
+        .select('trainee_id course_id test_id test_type answers questions_snapshot voice_transcript score passing_score submitted_at ai_feedback')
+        .populate('course_id', 'title')
+        .populate('test_id', 'title test_type questions')
+        .sort({ submitted_at: -1 })
+        .limit(3000)
+        .lean(),
+    ]);
+
+    const roleplaysByTrainee = {};
+    for (const attempt of roleplays) {
+      const tid = attempt.trainee_id?.toString();
+      if (!tid) continue;
+      if (!roleplaysByTrainee[tid]) roleplaysByTrainee[tid] = [];
+      roleplaysByTrainee[tid].push({
+        id: attempt._id,
+        title: attempt.lesson_id?.title || 'Roleplay',
+        course_title: attempt.course_id?.title || 'Unknown course',
+        module_title: attempt.module_id?.title || null,
+        lesson_title: attempt.lesson_id?.title || null,
+        scenario_type: attempt.scenario_type || null,
+        score: attempt.score,
+        grade: attempt.grade,
+        passed: !!attempt.passed,
+        question_count: attempt.question_count || 0,
+        summary: attempt.summary?.summary || null,
+        date: attempt.submitted_at || attempt.createdAt,
+        qa: roleplayPairs(attempt),
+      });
+    }
+
+    const assessmentsByTrainee = {};
+    for (const attempt of assessments) {
+      const tid = attempt.trainee_id?.toString();
+      if (!tid) continue;
+      if (!assessmentsByTrainee[tid]) assessmentsByTrainee[tid] = [];
+      assessmentsByTrainee[tid].push({
+        id: attempt._id,
+        title: attempt.test_id?.title || 'Assessment',
+        course_title: attempt.course_id?.title || 'Unknown course',
+        test_type: attempt.test_type,
+        score: attempt.score,
+        passing_score: attempt.passing_score || 60,
+        passed: attempt.score != null ? attempt.score >= (attempt.passing_score || 60) : false,
+        feedback: attempt.ai_feedback || null,
+        date: attempt.submitted_at,
+        qa: assessmentPairs(attempt),
+      });
+    }
+
+    const students = trainees.map(trainee => {
+      const tid = trainee._id.toString();
+      return {
+        _id: trainee._id,
+        name: trainee.name,
+        email: trainee.email,
+        phone: trainee.phone || '',
+        roleplays: roleplaysByTrainee[tid] || [],
+        assessments: assessmentsByTrainee[tid] || [],
+      };
+    });
+
+    res.json({ success: true, students });
+  } catch (err) { next(err); }
+});
+
 module.exports = router;
