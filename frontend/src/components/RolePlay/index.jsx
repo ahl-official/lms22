@@ -10,13 +10,6 @@ import toast from 'react-hot-toast'
 
 const MAX_ROLEPLAY_QUESTIONS = 5
 
-const SCENARIO_TYPES = [
-    { key: 'objection', label: 'Objection Handling', desc: 'Customer raises concerns about price, timing, or trust', activeClass: 'border-coral-400 bg-coral-50 text-coral-700' },
-    { key: 'consultation', label: 'Needs Assessment', desc: 'Understand what the customer actually needs', activeClass: 'border-brand-400 bg-brand-50 text-brand-700' },
-    { key: 'demo', label: 'Product Demo', desc: 'Walk a customer through the product or service', activeClass: 'border-amber-400 bg-amber-50 text-amber-700' },
-    { key: 'closing', label: 'Closing the Deal', desc: 'Convert an interested prospect into a commitment', activeClass: 'border-sage-500 bg-sage-50 text-sage-700' },
-]
-
 const speak = (text) => new Promise(resolve => {
     if (!text || typeof window === 'undefined' || !window.speechSynthesis) return resolve()
     window.speechSynthesis.cancel()
@@ -206,7 +199,9 @@ function SummaryScreen({ summary, onRestart }) {
 }
 
 export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
-    const [scenarioType, setScenarioType] = useState('objection')
+    const [personas, setPersonas] = useState([])
+    const [selectedPersonaKey, setSelectedPersonaKey] = useState('')
+    const [personasLoading, setPersonasLoading] = useState(false)
     const [scenario, setScenario] = useState(null)
     const [conversation, setConversation] = useState([])
     const [phase, setPhase] = useState('idle')
@@ -221,6 +216,23 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
     useEffect(() => setGateProgress(progress), [progress])
     useEffect(() => { conversationRef.current = conversation }, [conversation])
     useEffect(() => () => window.speechSynthesis?.cancel(), [])
+    useEffect(() => {
+        if (lesson.transcript_status !== 'ready' || !lesson.transcript) return
+
+        let mounted = true
+        setPersonasLoading(true)
+        rolePlayAPI.getPersonas(lesson._id)
+            .then(res => {
+                if (!mounted) return
+                const nextPersonas = res.data.personas || []
+                setPersonas(nextPersonas)
+                setSelectedPersonaKey(current => current || nextPersonas[0]?.key || '')
+            })
+            .catch(() => toast.error('Could not generate lesson personas'))
+            .finally(() => mounted && setPersonasLoading(false))
+
+        return () => { mounted = false }
+    }, [lesson._id, lesson.transcript, lesson.transcript_status])
 
     const reset = useCallback(() => {
         window.speechSynthesis?.cancel()
@@ -254,7 +266,7 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
                 const progressRes = await rolePlayAPI.recordProgress({
                     lesson_id: lesson._id,
                     score: nextSummary.overall_score,
-                    scenario_type: scenarioType,
+                    scenario_type: scenario.scenario_type || selectedPersonaKey || 'transcript-persona',
                     question_count: conversationOverride.filter(m => m.role === 'user').length,
                     scenario,
                     conversation: conversationOverride,
@@ -282,7 +294,7 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
         } finally {
             setLoading(false)
         }
-    }, [lesson._id, loading, onProgressUpdate, scenario, scenarioType])
+    }, [lesson._id, loading, onProgressUpdate, scenario, selectedPersonaKey])
 
     const startScenario = async () => {
         if (gateProgress?.exhausted && !gateProgress?.unlocked) {
@@ -293,7 +305,8 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
         setStarting(true)
         reset()
         try {
-            const res = await rolePlayAPI.startScenario({ lesson_id: lesson._id, scenario_type: scenarioType })
+            const selectedPersona = personas.find(p => p.key === selectedPersonaKey) || personas[0] || null
+            const res = await rolePlayAPI.startScenario({ lesson_id: lesson._id, persona: selectedPersona })
             const sc = res.data.scenario
             const opening = { role: 'character', content: sc.opening_line, coaching: null }
             setScenario(sc)
@@ -381,21 +394,42 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
         return (
             <div className="space-y-4">
                 <div>
-                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Choose a voice practice type</p>
+                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Choose a customer persona</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {SCENARIO_TYPES.map(type => (
-                            <button key={type.key} onClick={() => setScenarioType(type.key)}
-                                className={`p-3 rounded-xl border-2 text-left transition-all ${scenarioType === type.key
-                                    ? type.activeClass
-                                    : 'border-gray-200 hover:border-gray-300 text-gray-600 hover:bg-gray-50'
-                                    }`}>
-                                <p className="font-semibold text-sm">{type.label}</p>
-                                <p className={`text-xs mt-0.5 ${scenarioType === type.key ? 'opacity-80' : 'text-gray-400'}`}>{type.desc}</p>
-                            </button>
-                        ))}
+                        {personasLoading ? (
+                            <div className="sm:col-span-2 p-4 rounded-xl border border-gray-200 bg-gray-50 flex items-center gap-2 text-sm text-gray-500">
+                                <Loader2 size={15} className="animate-spin" /> Generating lesson personas...
+                            </div>
+                        ) : personas.length === 0 ? (
+                            <div className="sm:col-span-2 p-4 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-500">
+                                Personas will be generated from this lesson transcript when you start.
+                            </div>
+                        ) : personas.map(persona => {
+                            const active = selectedPersonaKey === persona.key
+                            return (
+                                <button key={persona.key} onClick={() => setSelectedPersonaKey(persona.key)}
+                                    className={`p-3 rounded-xl border-2 text-left transition-all ${active
+                                        ? 'border-brand-400 bg-brand-50 text-brand-800'
+                                        : 'border-gray-200 hover:border-gray-300 text-gray-600 hover:bg-gray-50'
+                                        }`}>
+                                    <p className="font-semibold text-sm">{persona.label}</p>
+                                    <p className={`text-xs mt-0.5 ${active ? 'text-brand-700' : 'text-gray-400'}`}>{persona.customer_role}</p>
+                                    <p className={`text-xs mt-2 line-clamp-2 ${active ? 'text-brand-700' : 'text-gray-500'}`}>{persona.concern || persona.situation}</p>
+                                    {persona.focus_areas?.length > 0 && (
+                                        <div className="flex flex-wrap gap-1 mt-2">
+                                            {persona.focus_areas.slice(0, 3).map((focus, idx) => (
+                                                <span key={idx} className={`text-[10px] px-1.5 py-0.5 rounded-full ${active ? 'bg-white text-brand-700' : 'bg-gray-100 text-gray-500'}`}>
+                                                    {focus}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </button>
+                            )
+                        })}
                     </div>
                 </div>
-                <button onClick={startScenario} disabled={starting} className="btn-primary w-full flex items-center justify-center gap-2">
+                <button onClick={startScenario} disabled={starting || personasLoading} className="btn-primary w-full flex items-center justify-center gap-2">
                     {starting ? <Loader2 size={15} className="animate-spin" /> : <Users size={15} />}
                     {starting ? 'Setting up scenario...' : 'Start Voice Practice'}
                 </button>
@@ -406,7 +440,6 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
             </div>
         )
     }
-
     const userTurnCount = conversation.filter(m => m.role === 'user').length
     const currentPrompt = [...conversation].reverse().find(m => m.role === 'character')?.content || scenario.opening_line
     const feedbackTier = latestFeedback?.tier || 'constructive'

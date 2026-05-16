@@ -284,6 +284,7 @@ router.post('/:id/fetch-transcript', authenticate, authorize('admin', 'trainer')
             lesson.transcript_status = 'ready';
             // Bust cached AI notes since transcript changed
             lesson.ai_notes = { summary: null, flashcards: null, diagrams: null, keyPoints: null, generated_at: null };
+            lesson.roleplay_personas = { personas: null, generated_at: null };
             await lesson.save();
             return res.json({ success: true, transcript_status: 'ready' });
         } else {
@@ -309,6 +310,7 @@ router.put('/:id/transcript', authenticate, authorize('admin', 'trainer'), async
         lesson.transcript = req.body.transcript;
         lesson.transcript_status = 'ready';
         lesson.ai_notes = { summary: null, flashcards: null, diagrams: null, keyPoints: null, generated_at: null };
+        lesson.roleplay_personas = { personas: null, generated_at: null };
         await lesson.save();
         res.json({ success: true, lesson });
     } catch (err) {

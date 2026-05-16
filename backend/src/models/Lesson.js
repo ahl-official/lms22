@@ -55,6 +55,10 @@ const lessonSchema = new mongoose.Schema(
             keyPoints: { type: mongoose.Schema.Types.Mixed, default: null },
             generated_at: { type: Date, default: null },
         },
+        roleplay_personas: {
+            personas: { type: mongoose.Schema.Types.Mixed, default: null },
+            generated_at: { type: Date, default: null },
+        },
 
         duration_minutes: { type: Number, default: null },
         is_published: { type: Boolean, default: false },

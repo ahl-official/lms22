@@ -173,6 +173,7 @@ export const rolePlayAPI = {
   getTraineeHistory: (traineeId, params) => api.get(`/role-play/history/trainee/${traineeId}`, { params }),
   recordProgress: (data) => api.post('/role-play/progress', data),
   unlockProgress: (lessonId, data) => api.put(`/role-play/progress/${lessonId}/unlock`, data),
+  getPersonas: (lessonId) => api.get(`/role-play/personas/${lessonId}`),
   startScenario: (data) => api.post('/role-play/scenario', data),
   sendTurn: (data) => api.post('/role-play/turn', data),
   sendAudioTurn: (formData) => api.post('/role-play/turn-audio', formData, {

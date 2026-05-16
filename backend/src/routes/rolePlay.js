@@ -38,6 +38,82 @@ const parseJSON = (raw) => {
 const hasAnyRole = (user, roles) =>
     roles.includes(user?.role) || user?.roles?.some(r => roles.includes(r))
 
+const fallbackPersonas = (lessonTitle = 'this lesson') => ([
+    {
+        key: 'curious-client',
+        label: 'Curious Client',
+        customer_name: 'Riya',
+        customer_role: `a first-time client learning about ${lessonTitle}`,
+        situation: 'They are interested but need a simple, practical explanation before moving forward.',
+        concern: 'They want to understand the service, cost, and next step clearly.',
+        goal: 'Help the client feel informed and guide them toward the right consultation or next step.',
+        focus_areas: ['explain simply', 'reassure', 'guide next step'],
+    },
+    {
+        key: 'cautious-buyer',
+        label: 'Cautious Buyer',
+        customer_name: 'Raj',
+        customer_role: `a cautious client comparing options from ${lessonTitle}`,
+        situation: 'They are interested but worried about choosing the wrong option.',
+        concern: 'They need confidence, clarity, and a reason to trust the recommendation.',
+        goal: 'Answer their concern, connect it to the lesson, and offer a helpful next step.',
+        focus_areas: ['build trust', 'clarify concern', 'recommend next step'],
+    },
+])
+
+const generateLessonPersonas = async (lesson) => {
+    const prompt = `Create roleplay customer personas from this lesson transcript.
+
+LESSON TITLE: "${lesson.title}"
+TRANSCRIPT:
+"""
+${(lesson.transcript || '').slice(0, 5000)}
+"""
+
+Return ONLY valid JSON:
+{
+  "personas": [
+    {
+      "key": "short-kebab-case",
+      "label": "Short persona label",
+      "customer_name": "Realistic first name",
+      "customer_role": "Who this customer is",
+      "situation": "Customer situation based only on the transcript",
+      "concern": "The main question, doubt, or need this customer has",
+      "goal": "What the trainee must accomplish with this customer",
+      "focus_areas": ["specific lesson point 1", "specific lesson point 2", "specific lesson point 3"]
+    }
+  ]
+}
+
+Rules:
+- Generate 3 personas.
+- Each persona must be a CUSTOMER or CLIENT, never a trainer, consultant, or salesperson.
+- Base every persona on the transcript's product/service, objections, techniques, facts, and customer concerns.
+- Do not use generic preset categories like objection handling, demo, closing, or needs assessment.
+- Make each persona feel different and realistic.
+- Keep labels short and user-friendly.`
+
+    try {
+        const res = await callLLM([{ role: 'user', content: prompt }], 900)
+        const parsed = parseJSON(res.data.choices[0].message.content)
+        const personas = Array.isArray(parsed.personas) ? parsed.personas : []
+        return personas.slice(0, 4).map((persona, index) => ({
+            key: persona.key || `persona-${index + 1}`,
+            label: persona.label || `Customer ${index + 1}`,
+            customer_name: persona.customer_name || persona.character_name || `Customer ${index + 1}`,
+            customer_role: persona.customer_role || persona.character_role || 'a customer from this lesson',
+            situation: persona.situation || 'They need help with the topic covered in this lesson.',
+            concern: persona.concern || persona.opening_line || 'They have a question about the lesson topic.',
+            goal: persona.goal || 'Use the lesson content to help the customer move forward.',
+            focus_areas: Array.isArray(persona.focus_areas) ? persona.focus_areas.slice(0, 4) : [],
+        })).filter(p => p.label && p.customer_role)
+    } catch (err) {
+        console.warn('Roleplay persona generation failed:', err.message)
+        return fallbackPersonas(lesson.title)
+    }
+}
+
 const formatProgress = (progress) => {
     const attemptsUsed = progress?.attempts_used || 0
     const unlocked = !!(progress?.passed || progress?.unlocked_by_trainer)
@@ -394,6 +470,25 @@ router.put('/course/:courseId/unlock', authenticate, authorize('trainer', 'admin
     } catch (err) { next(err) }
 })
 
+// GET /api/role-play/personas/:lessonId
+router.get('/personas/:lessonId', authenticate, async (req, res, next) => {
+    try {
+        const lesson = await Lesson.findById(req.params.lessonId).select('title transcript transcript_status roleplay_personas')
+        if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' })
+        if (lesson.transcript_status !== 'ready' || !lesson.transcript) {
+            return res.status(400).json({ success: false, message: 'Lesson transcript is required to generate personas.' })
+        }
+
+        let personas = Array.isArray(lesson.roleplay_personas?.personas) ? lesson.roleplay_personas.personas : []
+        if (!personas.length) {
+            personas = await generateLessonPersonas(lesson)
+            lesson.roleplay_personas = { personas, generated_at: new Date() }
+            await lesson.save()
+        }
+        res.json({ success: true, personas })
+    } catch (err) { next(err) }
+})
+
 // Direction hint for what kind of customer situation to simulate.
 // The CHARACTER is always a customer — the hint shapes what that customer wants/fears.
 const SCENARIO_TYPE_HINTS = {
@@ -406,10 +501,10 @@ const SCENARIO_TYPE_HINTS = {
 // ── POST /api/role-play/scenario ──────────────────────────────────────────────
 router.post('/scenario', authenticate, async (req, res, next) => {
     try {
-        const { lesson_id, scenario_type = 'objection' } = req.body
+        const { lesson_id, scenario_type = 'objection', persona = null } = req.body
         if (!lesson_id) return res.status(400).json({ success: false, message: 'lesson_id required' })
 
-        const lesson = await Lesson.findById(lesson_id).select('title transcript')
+        const lesson = await Lesson.findById(lesson_id).select('title transcript roleplay_personas')
         if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' })
         if (!lesson.transcript) {
             return res.status(400).json({ success: false, message: 'Lesson has no transcript — add one to enable Role Playing.' })
@@ -426,7 +521,13 @@ router.post('/scenario', authenticate, async (req, res, next) => {
             }
         }
 
-        const directionHint = SCENARIO_TYPE_HINTS[scenario_type] || SCENARIO_TYPE_HINTS.objection
+        let cachedPersonas = Array.isArray(lesson.roleplay_personas?.personas) ? lesson.roleplay_personas.personas : []
+        if (!persona && !cachedPersonas.length) {
+            cachedPersonas = await generateLessonPersonas(lesson)
+            lesson.roleplay_personas = { personas: cachedPersonas, generated_at: new Date() }
+            await lesson.save()
+        }
+        const selectedPersona = persona || cachedPersonas[0] || fallbackPersonas(lesson.title)[0]
 
         const prompt = `You are designing a sales role-play practice scenario for a trainee.
 
@@ -451,9 +552,11 @@ ${lesson.transcript.slice(0, 5000)}
    - Specific language, facts, or techniques the lesson gives the trainee to handle those questions
 
 2. Create a customer character whose opening question or concern requires the trainee to use exactly what the lesson teaches.
-   Direction: ${directionHint}
+   Use this transcript-generated customer persona:
+   ${JSON.stringify(selectedPersona, null, 2)}
 
 RULES:
+- The character must match the selected transcript-generated persona
 - The character must be a CUSTOMER — never a consultant or salesperson
 - The opening_line must be a customer question, concern, or objection — NOT a sales pitch
 - The customer should be polite, open to help, and only mildly cautious.
@@ -465,7 +568,8 @@ RULES:
 
 Return ONLY valid JSON, no markdown:
 {
-  "scenario_type": "${scenario_type}",
+  "scenario_type": "transcript-persona",
+  "persona_label": "Transcript Persona",
   "lesson_skill": "One sentence: the main skill or knowledge this lesson teaches the trainee",
   "lesson_key_points": ["key fact/technique 1 from transcript", "key fact/technique 2", "key fact/technique 3"],
   "character_name": "A realistic customer first name",
@@ -477,6 +581,8 @@ Return ONLY valid JSON, no markdown:
 
         const res2 = await callLLM([{ role: 'user', content: prompt }], 600)
         const scenario = parseJSON(res2.data.choices[0].message.content)
+        scenario.scenario_type = selectedPersona.key || scenario.scenario_type || scenario_type
+        scenario.persona_label = selectedPersona.label || scenario.persona_label || 'Transcript Persona'
         res.json({ success: true, scenario })
     } catch (err) { next(err) }
 })
