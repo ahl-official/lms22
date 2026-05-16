@@ -22,7 +22,15 @@ const lessonSchema = new mongoose.Schema(
         description: { type: String, default: '' },
         order: { type: Number, default: 0 },
 
-        // Video
+        // Primary lesson content. video_url/video_source are kept for older records.
+        content_url: { type: String, default: null },
+        content_type: { type: String, enum: ['video', 'pdf', 'doc', 'unknown'], default: 'unknown' },
+        content_source: {
+            type: String,
+            enum: ['youtube', 'gumlet', 'google_drive', 'google_docs', 'direct', 'unknown'],
+            default: 'unknown',
+        },
+        embed_url: { type: String, default: null },
         video_url: { type: String, default: null },
         video_source: { type: String, enum: ['youtube', 'gumlet', 'unknown'], default: 'unknown' },
         transcript: { type: String, default: null },

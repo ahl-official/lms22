@@ -147,14 +147,16 @@ function InlineLessonRow({ lesson, courseId, onRefresh }) {
   const [showTestReview, setShowTestReview] = useState(false)
   const [showTypePicker, setShowTypePicker] = useState(false)
 
-  const hasVideo = !!lesson.video_url
+  const contentUrl = lesson.content_url || lesson.video_url
+  const contentType = lesson.content_type || (['youtube', 'gumlet'].includes(lesson.video_source) ? 'video' : 'unknown')
+  const hasContent = !!contentUrl
   const hasTranscript = lesson.transcript_status === 'ready'
   const hasTest = !!lesson.test_id
   const testIsLive = lesson.test_id?.is_active === true
   const testIsDraft = hasTest && !testIsLive
 
   const handleFetchTranscript = async () => {
-    if (!hasVideo) return toast.error('Add a video URL to this lesson first')
+    if (!hasContent) return toast.error('Add a content URL to this lesson first')
     setFetchingTranscript(true)
     try {
       await lessonsAPI.fetchTranscript(lesson._id)
@@ -214,7 +216,10 @@ function InlineLessonRow({ lesson, courseId, onRefresh }) {
       {/* ── lesson header ── */}
       <div className="flex items-center gap-3 px-4 py-3">
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          {hasVideo && <Video size={13} className="text-brand-400" />}
+          {hasContent && (contentType === 'video'
+            ? <Video size={13} className="text-brand-400" />
+            : <FileText size={13} className="text-brand-400" />
+          )}
           {lesson.text_content && <FileText size={13} className="text-blue-400" />}
           {lesson.study_notes && <BookMarked size={13} className="text-sage-500" />}
           {lesson.quiz_questions?.length > 0 && <ClipboardList size={13} className="text-amber-400" />}
@@ -255,8 +260,8 @@ function InlineLessonRow({ lesson, courseId, onRefresh }) {
           <span className="text-xs text-gray-400 font-medium">Transcript:</span>
           <button
             onClick={handleFetchTranscript}
-            disabled={fetchingTranscript || !hasVideo}
-            title={!hasVideo ? 'Add a video URL first' : 'Auto-fetch transcript from video'}
+            disabled={fetchingTranscript || !hasContent}
+            title={!hasContent ? 'Add a content URL first' : 'Auto-extract text from content link'}
             className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-white border border-gray-200 text-gray-600 hover:border-brand-400 hover:text-brand-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {fetchingTranscript ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
@@ -362,11 +367,11 @@ function InlineLessonRow({ lesson, courseId, onRefresh }) {
       )}
 
       {/* hints */}
-      {!hasVideo && (
+      {!hasContent && (
         <div className="px-4 py-2 bg-amber-50 border-t border-amber-100">
           <p className="text-xs text-amber-600 flex items-center gap-1.5">
             <AlertCircle size={11} />
-            No video URL — edit this lesson to add one before fetching transcript
+            No content URL - edit this lesson to add a video, PDF, DOCX, Google Docs, or Drive link before extracting text
           </p>
         </div>
       )}
@@ -446,7 +451,14 @@ function AddLessonForm({ moduleId, courseId, onSaved, onCancel }) {
     if (!title.trim()) return toast.error('Title is required')
     setSaving(true)
     try {
-      await lessonsAPI.create({ module_id: moduleId, course_id: courseId, title: title.trim(), video_url: videoUrl.trim() || null })
+      const contentUrl = videoUrl.trim() || null
+      await lessonsAPI.create({
+        module_id: moduleId,
+        course_id: courseId,
+        title: title.trim(),
+        content_url: contentUrl,
+        video_url: contentUrl,
+      })
       toast.success('Lesson created')
       onSaved()
     } catch (err) {
@@ -459,7 +471,7 @@ function AddLessonForm({ moduleId, courseId, onSaved, onCancel }) {
       <p className="text-sm font-semibold text-brand-700">New Lesson</p>
       <input className="input-field text-sm" placeholder="Lesson title *"
         value={title} onChange={e => setTitle(e.target.value)} autoFocus />
-      <input className="input-field text-sm" placeholder="Video URL (YouTube or Gumlet) — optional"
+      <input className="input-field text-sm" placeholder="Content URL (YouTube, Gumlet, PDF, DOCX, Drive) - optional"
         value={videoUrl} onChange={e => setVideoUrl(e.target.value)} />
       <p className="text-xs text-gray-400">You can add text content, study notes, and quiz questions after creating.</p>
       <div className="flex gap-2">

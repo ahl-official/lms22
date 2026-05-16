@@ -9,7 +9,7 @@ const Test = require('../models/Test');
 const Module = require('../models/Module');
 const Enrollment = require('../models/Enrollment');
 const { authenticate, authorize } = require('../middleware/auth');
-const { detectVideoSource, fetchTranscript } = require('../services/transcriptService');
+const { detectContentSource, fetchTranscript } = require('../services/transcriptService');
 const { generateTest } = require('../services/aiService');
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -46,6 +46,30 @@ const attachProgress = async (lessons, traineeId) => {
             completed_at: prog?.completed_at ?? null,
         };
     });
+};
+
+const applyContentLink = (lesson, rawUrl) => {
+    const url = rawUrl?.trim?.() || null;
+    const detected = url ? detectContentSource(url) : {
+        content_type: 'unknown',
+        content_source: 'unknown',
+        video_source: 'unknown',
+        embed_url: null,
+    };
+
+    lesson.content_url = url;
+    lesson.content_type = detected.content_type;
+    lesson.content_source = detected.content_source;
+    lesson.embed_url = detected.embed_url;
+    lesson.video_url = url;
+    lesson.video_source = detected.video_source || 'unknown';
+};
+
+const resetGeneratedLessonContent = (lesson) => {
+    lesson.transcript = null;
+    lesson.transcript_status = 'none';
+    lesson.ai_notes = { summary: null, flashcards: null, diagrams: null, keyPoints: null, generated_at: null };
+    lesson.roleplay_personas = { personas: null, generated_at: null };
 };
 
 // ── GET /api/lessons/module/:moduleId ─────────────────────────────────────────
@@ -138,7 +162,7 @@ router.post('/', authenticate, authorize('admin', 'trainer'), async (req, res, n
     try {
         const {
             module_id, course_id, title, description,
-            video_url, text_content, study_notes,
+            content_url, video_url, text_content, study_notes,
             quiz_questions, quiz_passing_score, duration_minutes,
         } = req.body;
 
@@ -151,15 +175,20 @@ router.post('/', authenticate, authorize('admin', 'trainer'), async (req, res, n
 
         const last = await Lesson.findOne({ module_id }).sort({ order: -1 });
         const order = last ? last.order + 1 : 0;
-        const video_source = video_url ? detectVideoSource(video_url) : 'unknown';
+        const contentLink = content_url !== undefined ? content_url : video_url;
+        const detected = contentLink ? detectContentSource(contentLink) : null;
 
         const lesson = await Lesson.create({
             module_id, course_id,
             title: title.trim(),
             description: description?.trim() || '',
             order,
-            video_url: video_url || null,
-            video_source,
+            content_url: contentLink?.trim?.() || null,
+            content_type: detected?.content_type || 'unknown',
+            content_source: detected?.content_source || 'unknown',
+            embed_url: detected?.embed_url || null,
+            video_url: contentLink?.trim?.() || null,
+            video_source: detected?.video_source || 'unknown',
             text_content: text_content || null,
             study_notes: study_notes || null,
             quiz_questions: quiz_questions || [],
@@ -183,7 +212,7 @@ router.put('/:id', authenticate, authorize('admin', 'trainer'), async (req, res,
 
         const {
             title, description, order, is_published,
-            video_url, text_content, study_notes,
+            content_url, video_url, text_content, study_notes,
             quiz_questions, quiz_passing_score, duration_minutes,
         } = req.body;
 
@@ -197,12 +226,10 @@ router.put('/:id', authenticate, authorize('admin', 'trainer'), async (req, res,
         if (quiz_passing_score !== undefined) lesson.quiz_passing_score = quiz_passing_score;
         if (duration_minutes !== undefined) lesson.duration_minutes = duration_minutes;
 
-        if (video_url !== undefined && video_url !== lesson.video_url) {
-            lesson.video_url = video_url || null;
-            lesson.video_source = video_url ? detectVideoSource(video_url) : 'unknown';
-            lesson.transcript = null;
-            lesson.transcript_status = 'none';
-            lesson.ai_notes = { summary: null, flashcards: null, diagrams: null, keyPoints: null, generated_at: null };
+        const nextContentUrl = content_url !== undefined ? content_url : video_url;
+        if (nextContentUrl !== undefined && nextContentUrl !== (lesson.content_url || lesson.video_url || null)) {
+            applyContentLink(lesson, nextContentUrl);
+            resetGeneratedLessonContent(lesson);
         }
 
         await lesson.save();
@@ -264,7 +291,12 @@ router.post('/:id/fetch-transcript', authenticate, authorize('admin', 'trainer')
     try {
         const lesson = await Lesson.findById(req.params.id);
         if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
-        if (!lesson.video_url) return res.status(400).json({ success: false, message: 'No video URL set on this lesson' });
+        const contentUrl = lesson.content_url || lesson.video_url;
+        if (!contentUrl) return res.status(400).json({ success: false, message: 'No content URL set on this lesson' });
+
+        if (!lesson.content_url) {
+            applyContentLink(lesson, contentUrl);
+        }
 
         lesson.transcript_status = 'fetching';
         await lesson.save();
@@ -273,7 +305,7 @@ router.post('/:id/fetch-transcript', authenticate, authorize('admin', 'trainer')
         let fetchError = null;
 
         try {
-            transcript = await fetchTranscript(lesson.video_url);
+            transcript = await fetchTranscript(contentUrl);
         } catch (e) {
             fetchError = e.message;
             console.error(`[Transcript] Fetch failed for lesson ${lesson._id}:`, e.message);

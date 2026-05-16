@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { Play, Youtube, Video } from 'lucide-react'
+import { ExternalLink, FileText, Play, Youtube, Video } from 'lucide-react'
 
 const getYouTubeId = (url = '') => {
-  const m = url.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/)
+  const m = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([A-Za-z0-9_-]{11})/)
   return m ? m[1] : null
 }
 
@@ -11,13 +11,77 @@ const getGumletId = (url = '') => {
   return m ? m[1] : null
 }
 
-export default function VideoPlayer({ videoUrl, videoSource, title, onEnded }) {
+const getDirectType = (url = '') => {
+  const path = url.split('?')[0].toLowerCase()
+  if (path.endsWith('.pdf')) return 'pdf'
+  if (path.endsWith('.doc') || path.endsWith('.docx')) return 'doc'
+  return 'unknown'
+}
+
+const getDocumentEmbedUrl = (url, embedUrl, contentType) => {
+  if (embedUrl) return embedUrl
+  if (!url) return null
+  const type = contentType === 'unknown' ? getDirectType(url) : contentType
+  if (type === 'pdf') return url
+  if (type === 'doc') return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`
+  return null
+}
+
+export default function VideoPlayer({
+  videoUrl,
+  videoSource,
+  title,
+  onEnded,
+  contentType = 'unknown',
+  embedUrl = null,
+}) {
   const [playing, setPlaying] = useState(false)
+  const effectiveType = contentType === 'unknown' ? getDirectType(videoUrl) : contentType
+  const isDocument = effectiveType === 'pdf' || effectiveType === 'doc'
+  const documentEmbedUrl = getDocumentEmbedUrl(videoUrl, embedUrl, effectiveType)
 
   if (!videoUrl) {
     return (
       <div className="aspect-video bg-gray-100 rounded-xl flex items-center justify-center">
-        <p className="text-gray-400 text-sm">No video URL</p>
+        <p className="text-gray-400 text-sm">No content URL</p>
+      </div>
+    )
+  }
+
+  if (isDocument) {
+    return (
+      <div className="rounded-xl overflow-hidden border border-gray-100 bg-gray-50">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-white border-b border-gray-100">
+          <div className="flex items-center gap-2 min-w-0">
+            <FileText size={16} className="text-brand-500 flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-800 truncate">{title || 'Lesson document'}</p>
+              <p className="text-xs text-gray-400">{effectiveType === 'pdf' ? 'PDF notes' : 'Document notes'}</p>
+            </div>
+          </div>
+          <a
+            href={videoUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-600 hover:text-brand-700 flex-shrink-0"
+          >
+            <ExternalLink size={12} /> Open
+          </a>
+        </div>
+        {documentEmbedUrl ? (
+          <iframe
+            src={documentEmbedUrl}
+            title={title}
+            className="w-full h-[70vh] bg-white"
+            allow="fullscreen"
+          />
+        ) : (
+          <div className="min-h-[280px] flex flex-col items-center justify-center text-center px-6">
+            <FileText size={34} className="text-gray-300 mb-3" />
+            <p className="text-sm font-medium text-gray-600">This document cannot be embedded here.</p>
+            <p className="text-xs text-gray-400 mt-1">Open it in a new tab to read the notes.</p>
+          </div>
+        )}
       </div>
     )
   }

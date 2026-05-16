@@ -2,7 +2,7 @@ const router = require('express').Router();
 const Course = require('../models/Course');
 const Enrollment = require('../models/Enrollment');
 const { authenticate, authorize } = require('../middleware/auth');
-const { detectVideoSource, fetchTranscript } = require('../services/transcriptService');
+const { detectContentSource, detectVideoSource, fetchTranscript } = require('../services/transcriptService');
 
 const getRawId = (field) => {
   if (!field) return null;
@@ -151,7 +151,8 @@ router.delete('/:id', authenticate, authorize('admin', 'trainer'), async (req, r
 router.post('/detect-video', authenticate, (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ success: false, message: 'URL required' });
-  res.json({ success: true, source: detectVideoSource(url) });
+  const detected = detectContentSource(url);
+  res.json({ success: true, source: detected.video_source, detected });
 });
 
 // POST /api/courses/:id/fetch-transcript

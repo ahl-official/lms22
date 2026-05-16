@@ -13,7 +13,7 @@ import toast from 'react-hot-toast'
 
 // ── Content type config ────────────────────────────────────────────────────────
 const CONTENT_TABS = [
-    { key: 'video', label: 'Video', icon: Video },
+    { key: 'video', label: 'Link', icon: Video },
     { key: 'text', label: 'Text', icon: FileText },
     { key: 'notes', label: 'Study Notes', icon: BookMarked },
     { key: 'quiz', label: 'Quiz', icon: ClipboardList },
@@ -21,7 +21,12 @@ const CONTENT_TABS = [
 
 const contentTags = (lesson) => {
     const tags = []
-    if (lesson.video_url) tags.push({ key: 'video', icon: Video, label: 'Video' })
+    const contentUrl = lesson.content_url || lesson.video_url
+    const contentType = lesson.content_type || (['youtube', 'gumlet'].includes(lesson.video_source) ? 'video' : 'unknown')
+    if (contentUrl) {
+        const isVideo = contentType === 'video'
+        tags.push({ key: 'content', icon: isVideo ? Video : FileText, label: isVideo ? 'Video' : contentType === 'pdf' ? 'PDF' : 'Doc' })
+    }
     if (lesson.text_content) tags.push({ key: 'text', icon: FileText, label: 'Text' })
     if (lesson.study_notes) tags.push({ key: 'notes', icon: BookMarked, label: 'Notes' })
     if (lesson.quiz_questions?.length) tags.push({ key: 'quiz', icon: ClipboardList, label: 'Quiz' })
@@ -138,7 +143,7 @@ function LessonForm({ moduleId, courseId, existing, onClose, onSaved }) {
         description: existing?.description || '',
         duration_minutes: existing?.duration_minutes || '',
         is_published: existing?.is_published ?? false,
-        video_url: existing?.video_url || '',
+        content_url: existing?.content_url || existing?.video_url || '',
         text_content: existing?.text_content || '',
         study_notes: existing?.study_notes || '',
         quiz_questions: existing?.quiz_questions || [],
@@ -173,7 +178,8 @@ function LessonForm({ moduleId, courseId, existing, onClose, onSaved }) {
                 module_id: moduleId,
                 course_id: courseId,
                 duration_minutes: form.duration_minutes ? Number(form.duration_minutes) : null,
-                video_url: form.video_url.trim() || null,
+                content_url: form.content_url.trim() || null,
+                video_url: form.content_url.trim() || null,
                 text_content: form.text_content.trim() || null,
                 study_notes: form.study_notes.trim() || null,
             }
@@ -238,9 +244,12 @@ function LessonForm({ moduleId, courseId, existing, onClose, onSaved }) {
 
                             {tab === 'video' && (
                                 <div>
-                                    <label className="text-sm font-semibold text-gray-700 block mb-1">Video URL</label>
-                                    <input className="input-field" placeholder="YouTube or Gumlet URL"
-                                        value={form.video_url} onChange={e => set('video_url', e.target.value)} />
+                                    <label className="text-sm font-semibold text-gray-700 block mb-1">Content URL</label>
+                                    <input className="input-field" placeholder="YouTube, Gumlet, Google Drive, PDF, or DOCX URL"
+                                        value={form.content_url} onChange={e => set('content_url', e.target.value)} />
+                                    <p className="text-xs text-gray-400 mt-1">
+                                        The system auto-detects videos, PDFs, DOCX files, Google Docs, and Drive preview links.
+                                    </p>
                                 </div>
                             )}
                             {tab === 'text' && (

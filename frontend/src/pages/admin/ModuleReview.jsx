@@ -18,7 +18,15 @@ const lessonProgressAPI = {
 // ── Content type badge ────────────────────────────────────────────────────
 function ContentBadges({ lesson }) {
     const tags = []
-    if (lesson.video_url) tags.push({ icon: Video, label: 'Video', color: 'text-brand-500  bg-brand-50' })
+    const contentUrl = lesson.content_url || lesson.video_url
+    const contentType = lesson.content_type || (['youtube', 'gumlet'].includes(lesson.video_source) ? 'video' : 'unknown')
+    if (contentUrl) {
+        tags.push({
+            icon: contentType === 'video' ? Video : FileText,
+            label: contentType === 'video' ? 'Video' : contentType === 'pdf' ? 'PDF' : 'Doc',
+            color: 'text-brand-500  bg-brand-50',
+        })
+    }
     if (lesson.text_content) tags.push({ icon: FileText, label: 'Text', color: 'text-blue-500   bg-blue-50' })
     if (lesson.study_notes) tags.push({ icon: BookMarked, label: 'Notes', color: 'text-sage-600   bg-sage-50' })
     if (lesson.quiz_questions?.length) tags.push({ icon: ClipboardList, label: 'Quiz', color: 'text-amber-500  bg-amber-50' })

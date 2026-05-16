@@ -24,7 +24,10 @@ function LessonContent({ lesson, onComplete, onVideoEnd }) {
   const qc = useQueryClient()
   const hasQuiz = lesson.quiz_questions?.length > 0
   const hasTest = !!lesson.test_id
-  const hasVideo = !!lesson.video_url
+  const contentUrl = lesson.content_url || lesson.video_url
+  const contentType = lesson.content_type || (['youtube', 'gumlet'].includes(lesson.video_source) ? 'video' : 'unknown')
+  const hasContent = !!contentUrl
+  const hasVideo = hasContent && contentType === 'video'
   const hasText = !!lesson.text_content
   const hasNotes = !!lesson.study_notes
   const hasAI = lesson.transcript_status === 'ready'
@@ -38,10 +41,10 @@ function LessonContent({ lesson, onComplete, onVideoEnd }) {
 
   const rolePlayProgress = rolePlayData?.data?.progress
   const assessmentLocked = hasRolePlay && (hasQuiz || hasTest) && !rolePlayProgress?.unlocked
-  const hasLearningContent = hasVideo || hasText || hasNotes || hasAI
+  const hasLearningContent = hasContent || hasText || hasNotes || hasAI
 
   const availableTabs = [
-    hasLearningContent && { key: 'learn', label: 'Video & Notes', icon: Video },
+    hasLearningContent && { key: 'learn', label: 'Content & Notes', icon: contentType === 'video' ? Video : FileText },
     hasRolePlay && { key: 'roleplay', label: 'Role Playing', icon: Users },
     (hasQuiz || hasTest) && { key: 'quiz', label: 'Assessment', icon: assessmentLocked ? Lock : ClipboardList },
   ].filter(Boolean)
@@ -56,11 +59,11 @@ function LessonContent({ lesson, onComplete, onVideoEnd }) {
 
   // Auto-complete text/notes-only lessons
   useEffect(() => {
-    if (!lesson.is_completed && !hasVideo && !hasQuiz && !hasTest && (hasText || hasNotes)) {
+    if (!lesson.is_completed && !hasVideo && !hasQuiz && !hasTest && (hasContent || hasText || hasNotes)) {
       const t = setTimeout(() => onComplete(null), 1500)
       return () => clearTimeout(t)
     }
-  }, [lesson._id]) // eslint-disable-line
+  }, [lesson._id, hasContent, hasVideo, hasQuiz, hasTest, hasText, hasNotes]) // eslint-disable-line
 
   if (!availableTabs.length) return (
     <div className="card text-center py-16 text-gray-400">
@@ -104,10 +107,16 @@ function LessonContent({ lesson, onComplete, onVideoEnd }) {
 
       {tab === 'learn' && (
         <div className="space-y-4">
-          {hasVideo && (
+          {hasContent && (
             <div className="card">
-              <VideoPlayer videoUrl={lesson.video_url} videoSource={lesson.video_source}
-                title={lesson.title} onEnded={onVideoEnd} />
+              <VideoPlayer
+                videoUrl={contentUrl}
+                videoSource={lesson.video_source}
+                contentType={contentType}
+                embedUrl={lesson.embed_url}
+                title={lesson.title}
+                onEnded={onVideoEnd}
+              />
             </div>
           )}
           {hasAI && <LessonAINotes lesson={lesson} />}
