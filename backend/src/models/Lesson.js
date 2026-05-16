@@ -58,6 +58,7 @@ const lessonSchema = new mongoose.Schema(
         // Cached AI notes — generated from lesson transcript
         ai_notes: {
             summary: { type: String, default: null },
+            checklist: { type: mongoose.Schema.Types.Mixed, default: null },
             flashcards: { type: mongoose.Schema.Types.Mixed, default: null },
             diagrams: { type: mongoose.Schema.Types.Mixed, default: null },
             keyPoints: { type: mongoose.Schema.Types.Mixed, default: null },

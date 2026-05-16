@@ -68,7 +68,7 @@ const applyContentLink = (lesson, rawUrl) => {
 const resetGeneratedLessonContent = (lesson) => {
     lesson.transcript = null;
     lesson.transcript_status = 'none';
-    lesson.ai_notes = { summary: null, flashcards: null, diagrams: null, keyPoints: null, generated_at: null };
+    lesson.ai_notes = { summary: null, checklist: null, flashcards: null, diagrams: null, keyPoints: null, generated_at: null };
     lesson.roleplay_personas = { personas: null, generated_at: null };
 };
 
@@ -317,7 +317,7 @@ router.post('/:id/fetch-transcript', authenticate, authorize('admin', 'trainer')
             lesson.transcript = transcript;
             lesson.transcript_status = 'ready';
             // Bust cached AI notes since transcript changed
-            lesson.ai_notes = { summary: null, flashcards: null, diagrams: null, keyPoints: null, generated_at: null };
+            lesson.ai_notes = { summary: null, checklist: null, flashcards: null, diagrams: null, keyPoints: null, generated_at: null };
             lesson.roleplay_personas = { personas: null, generated_at: null };
             await lesson.save();
             return res.json({ success: true, transcript_status: 'ready' });
@@ -343,7 +343,7 @@ router.put('/:id/transcript', authenticate, authorize('admin', 'trainer'), async
 
         lesson.transcript = req.body.transcript;
         lesson.transcript_status = 'ready';
-        lesson.ai_notes = { summary: null, flashcards: null, diagrams: null, keyPoints: null, generated_at: null };
+        lesson.ai_notes = { summary: null, checklist: null, flashcards: null, diagrams: null, keyPoints: null, generated_at: null };
         lesson.roleplay_personas = { personas: null, generated_at: null };
         await lesson.save();
         res.json({ success: true, lesson });
@@ -501,12 +501,16 @@ Transcript: """${lesson.transcript.slice(0, 6000)}"""
 Return ONLY valid JSON (no markdown, no code fences):
 {
   "summary": "2-3 sentence overview",
+  "checklist": ["action item 1", "action item 2", "action item 3", "action item 4", "action item 5"],
   "flashcards": [{"front": "question", "back": "answer"}],
   "diagrams": [{"title": "short title", "code": "valid mermaid code"}],
   "keyPoints": ["point 1", "point 2", "point 3", "point 4", "point 5"]
 }
 
 Rules:
+- Checklist must summarize everything the trainee should actually do after watching/reading the lesson.
+- Checklist items must be practical, action-oriented, and start with a verb.
+- Use 5-8 checklist items.
 - 6-8 flashcards, progressively harder
 - First diagram: flowchart TD. Second diagram: mindmap
 - Mindmap root MUST use: root((Word))

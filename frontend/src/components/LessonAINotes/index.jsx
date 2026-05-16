@@ -3,7 +3,7 @@
 // Notes are cached on the server — no re-generation on every open.
 
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, BookOpen, GitFork, ChevronDown, ChevronUp, Loader2, RotateCcw } from 'lucide-react'
+import { Sparkles, BookOpen, GitFork, ChevronDown, ChevronUp, Loader2, RotateCcw, CheckSquare } from 'lucide-react'
 import { lessonsAPI } from '../../services/api'
 
 // ── Mermaid loader ─────────────────────────────────────────────────────────────
@@ -68,6 +68,19 @@ function Flashcard({ front, back, index }) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
+const normalizeList = (items) => {
+    if (!Array.isArray(items)) return []
+    return items
+        .map((item) => {
+            if (typeof item === 'string') return item
+            if (typeof item?.item === 'string') return item.item
+            if (typeof item?.text === 'string') return item.text
+            return ''
+        })
+        .map((item) => item.trim())
+        .filter(Boolean)
+}
+
 export default function LessonAINotes({ lesson }) {
     const [open, setOpen] = useState(false)
     const [loading, setLoading] = useState(false)
@@ -77,6 +90,11 @@ export default function LessonAINotes({ lesson }) {
     const [activeDiag, setActiveDiag] = useState(0)
 
     const hasTranscript = lesson.transcript_status === 'ready' && lesson.transcript
+    const generatedChecklist = notes ? normalizeList(notes.checklist) : []
+    const fallbackChecklist = notes ? normalizeList(notes.keyPoints).map((pt) => (
+        pt.match(/^(ask|confirm|explain|offer|share|book|clarify|review|practice|follow)/i) ? pt : `Review: ${pt}`
+    )) : []
+    const checklistItems = generatedChecklist.length ? generatedChecklist : fallbackChecklist
 
     const generate = async (force = false) => {
         if (!hasTranscript) return
@@ -108,7 +126,7 @@ export default function LessonAINotes({ lesson }) {
                 <div className="flex items-center gap-2">
                     <Sparkles size={16} className="text-brand-500" />
                     <span className="font-semibold text-gray-700 text-sm">AI Study Notes</span>
-                    <span className="text-xs text-gray-400">· Flashcards & Diagrams</span>
+                    <span className="text-xs text-gray-400">· Checklist, Flashcards & Diagrams</span>
                 </div>
                 {open ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
             </button>
@@ -148,6 +166,24 @@ export default function LessonAINotes({ lesson }) {
                             <p className="text-sm text-gray-600 leading-relaxed mb-4 bg-gray-50 rounded-xl px-4 py-3 border-l-2 border-brand-400">
                                 {notes.summary}
                             </p>
+
+                            {/* Checklist */}
+                            {checklistItems.length > 0 && (
+                                <div className="mb-4 bg-green-50 border border-green-100 rounded-2xl p-4">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <CheckSquare size={15} className="text-green-600" />
+                                        <p className="text-xs font-semibold text-green-700 tracking-wide">ACTION CHECKLIST</p>
+                                    </div>
+                                    <ul className="space-y-2">
+                                        {checklistItems.map((item, i) => (
+                                            <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
+                                                <span className="mt-0.5 w-4 h-4 rounded border border-green-300 bg-white flex-shrink-0" />
+                                                <span className="leading-relaxed">{item}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
 
                             {/* Key points */}
                             <div className="mb-4">
