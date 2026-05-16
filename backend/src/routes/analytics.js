@@ -21,6 +21,18 @@ router.get('/overview', authenticate, authorize('admin', 'trainer'), async (req,
     const enrollFilter = trainerCourseIds ? { course_id: { $in: trainerCourseIds } } : {};
     const attemptFilter = trainerCourseIds ? { course_id: { $in: trainerCourseIds } } : {};
     const rolePlayFilter = trainerCourseIds ? { course_id: { $in: trainerCourseIds } } : {};
+    const enrolledTraineeIds = trainerCourseIds
+      ? await Enrollment.distinct('trainee_id', enrollFilter)
+      : null;
+    const traineeUserFilter = trainerCourseIds
+      ? { _id: { $in: enrolledTraineeIds }, role: 'trainee', is_active: true }
+      : { role: 'trainee', is_active: true };
+    const trainerUserFilter = req.user.role === 'trainer'
+      ? { _id: req.user._id, is_active: true }
+      : { role: 'trainer', is_active: true };
+    const totalUserFilter = req.user.role === 'trainer'
+      ? { _id: { $in: [...enrolledTraineeIds, req.user._id] }, is_active: true }
+      : { is_active: true };
 
     const [
       totalUsers, trainees, trainers,
@@ -29,9 +41,9 @@ router.get('/overview', authenticate, authorize('admin', 'trainer'), async (req,
       totalAttempts, voiceAttempts, passedAttempts,
       rolePlayProgresses, rolePlayLocks,
     ] = await Promise.all([
-      User.countDocuments({ is_active: true }),
-      User.countDocuments({ role: 'trainee', is_active: true }),
-      User.countDocuments({ role: 'trainer', is_active: true }),
+      User.countDocuments(totalUserFilter),
+      User.countDocuments(traineeUserFilter),
+      User.countDocuments(trainerUserFilter),
       Course.countDocuments(trainerFilter),
       Course.countDocuments({ ...trainerFilter, is_published: true }),
       Course.countDocuments({ ...trainerFilter, requires_voice_test: true }),
@@ -150,8 +162,17 @@ router.get('/trainee/:traineeId', authenticate, authorize('admin', 'trainer'), a
 router.get('/voice-trends', authenticate, authorize('admin', 'trainer'), async (req, res, next) => {
   try {
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const trainerCourseIds = req.user.role === 'trainer'
+      ? (await Course.find({ created_by: req.user._id }).select('_id')).map(c => c._id)
+      : null;
+    const match = {
+      test_type: 'voice',
+      submitted_at: { $gte: since },
+      score: { $ne: null },
+      ...(trainerCourseIds ? { course_id: { $in: trainerCourseIds } } : {}),
+    };
     const trends = await Attempt.aggregate([
-      { $match: { test_type: 'voice', submitted_at: { $gte: since }, score: { $ne: null } } },
+      { $match: match },
       {
         $group: {
           _id: { $dateToString: { format: '%Y-%m-%d', date: '$submitted_at' } },
