@@ -261,9 +261,9 @@ export default function LessonAINotes({ lesson }) {
                                 <div className="ml-auto flex items-center gap-1">
                                     <button
                                         onClick={() => downloadNotes(notes, checklistItems, lesson.title)}
-                                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-gray-400 hover:text-brand-600 hover:bg-brand-50 transition-all"
-                                        title="Download notes as .txt">
-                                        <Download size={12} />
+                                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-brand-600 bg-brand-50 hover:bg-brand-100 border border-brand-200 transition-all"
+                                        title="Download study notes">
+                                        <Download size={13} /> Download
                                     </button>
                                     <button onClick={() => generate(true)}
                                         className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all"
