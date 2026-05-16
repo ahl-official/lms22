@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, BookOpen, GitFork, ChevronDown, ChevronUp, Loader2, RotateCcw } from 'lucide-react'
+import { Sparkles, BookOpen, GitFork, ChevronDown, ChevronUp, Loader2, RotateCcw, Download } from 'lucide-react'
 import { aiAPI } from '../../services/api'
 
-// ── Mermaid loader ────────────────────────────────────────────────
+// â”€â”€ Mermaid loader â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function useMermaid() {
   const [ready, setReady] = useState(false)
   useEffect(() => {
@@ -37,7 +37,7 @@ function MermaidDiagram({ code }) {
   return <div ref={ref} className="w-full overflow-x-auto" />
 }
 
-// ── Flashcard ─────────────────────────────────────────────────────
+// â”€â”€ Flashcard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function Flashcard({ front, back, index }) {
   const [flipped, setFlipped] = useState(false)
   return (
@@ -60,7 +60,7 @@ function Flashcard({ front, back, index }) {
           style={{ backfaceVisibility: 'hidden' }}
         >
           <p className="text-xs text-gray-400 mb-1.5 font-semibold tracking-wide">
-            Q{String(index + 1).padStart(2, '0')} · tap to reveal
+            Q{String(index + 1).padStart(2, '0')} Â· tap to reveal
           </p>
           <p className="text-sm text-gray-700 text-center leading-snug">{front}</p>
         </div>
@@ -77,7 +77,48 @@ function Flashcard({ front, back, index }) {
   )
 }
 
-// ── Main component ────────────────────────────────────────────────
+// â”€â”€ Main component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function downloadNotes(notes, courseTitle) {
+    const lines = []
+    const divider = '-'.repeat(60)
+
+    lines.push('AI STUDY NOTES -- ' + (courseTitle || 'Course'))
+    lines.push(divider)
+    lines.push('')
+
+    if (notes.summary) {
+        lines.push('SUMMARY')
+        lines.push(divider)
+        lines.push(notes.summary)
+        lines.push('')
+    }
+
+    if (notes.keyPoints && notes.keyPoints.length) {
+        lines.push('KEY POINTS')
+        lines.push(divider)
+        notes.keyPoints.forEach(function(pt) { lines.push('  * ' + pt) })
+        lines.push('')
+    }
+
+    if (notes.flashcards && notes.flashcards.length) {
+        lines.push('FLASHCARDS')
+        lines.push(divider)
+        notes.flashcards.forEach(function(card, i) {
+            lines.push('  Q' + String(i + 1).padStart(2, '0') + ': ' + card.front)
+            lines.push('  A' + String(i + 1).padStart(2, '0') + ': ' + card.back)
+            lines.push('')
+        })
+    }
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = (courseTitle || 'course').replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_study_notes.txt'
+    a.click()
+    URL.revokeObjectURL(url)
+}
+
 export default function AINotesPanel({ course }) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -138,7 +179,7 @@ Rules:
         <div className="flex items-center gap-2">
           <Sparkles size={16} className="text-brand-500" />
           <span className="font-semibold text-gray-700 text-sm">AI Study Notes</span>
-          <span className="text-xs text-gray-400">· Flashcards & Diagrams</span>
+          <span className="text-xs text-gray-400">Â· Flashcards & Diagrams</span>
         </div>
         {open ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
       </button>
@@ -168,7 +209,7 @@ Rules:
           {loading && (
             <div className="flex items-center justify-center gap-3 py-8">
               <Loader2 size={20} className="text-brand-500 animate-spin" />
-              <p className="text-sm text-gray-500">Generating your study notes…</p>
+              <p className="text-sm text-gray-500">Generating your study notesâ€¦</p>
             </div>
           )}
 
@@ -185,7 +226,7 @@ Rules:
                 <ul className="space-y-1.5">
                   {notes.keyPoints?.map((pt, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
-                      <span className="text-brand-400 font-bold mt-0.5 flex-shrink-0">·</span>
+                      <span className="text-brand-400 font-bold mt-0.5 flex-shrink-0">Â·</span>
                       {pt}
                     </li>
                   ))}
@@ -209,13 +250,21 @@ Rules:
                     <Icon size={13} /> {label}
                   </button>
                 ))}
-                <button
-                  onClick={generate}
-                  className="ml-auto flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all"
-                  title="Regenerate"
-                >
-                  <RotateCcw size={12} />
-                </button>
+                <div className="ml-auto flex items-center gap-1">
+                  <button
+                    onClick={() => downloadNotes(notes, course?.title)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-gray-400 hover:text-brand-600 hover:bg-brand-50 transition-all"
+                    title="Download notes as .txt">
+                    <Download size={12} />
+                  </button>
+                  <button
+                    onClick={generate}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all"
+                    title="Regenerate"
+                  >
+                    <RotateCcw size={12} />
+                  </button>
+                </div>
               </div>
 
               {/* Flashcards */}
