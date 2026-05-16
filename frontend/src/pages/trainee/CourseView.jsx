@@ -293,21 +293,6 @@ export default function CourseView() {
     queryKey: ['course-lessons', id],
     queryFn: () => lessonsAPI.getByCourse(id),
     enabled: !!id,
-    onSuccess: (data) => {
-      if (!selectedLesson && data?.data?.lessons?.length) {
-        const mods = modulesData?.data?.modules || []
-        const firstUnlocked = mods.find(m => !m.is_locked)
-        if (firstUnlocked) {
-          const firstLesson = data.data.lessons.find(l => {
-            const mid = l.module_id?._id || l.module_id
-            return mid?.toString() === firstUnlocked._id?.toString()
-          })
-          if (firstLesson) setSelectedLesson(firstLesson)
-        } else if (data.data.lessons[0]) {
-          setSelectedLesson(data.data.lessons[0])
-        }
-      }
-    },
   })
 
   const { data: testsData } = useQuery({
@@ -388,6 +373,20 @@ export default function CourseView() {
   const modules = modulesData?.data?.modules || []
   const lessons = lessonsData?.data?.lessons || []
   const hasModules = modules.length > 0
+
+  useEffect(() => {
+    if (selectedLesson || !lessons.length) return
+    const firstUnlocked = modules.find(m => !m.is_locked)
+    if (firstUnlocked) {
+      const firstLesson = lessons.find(l => {
+        const mid = l.module_id?._id || l.module_id
+        return mid?.toString() === firstUnlocked._id?.toString()
+      })
+      if (firstLesson) setSelectedLesson(firstLesson)
+      return
+    }
+    setSelectedLesson(lessons[0])
+  }, [selectedLesson, modules, lessons])
 
   const freshSelectedLesson = selectedLesson
     ? (lessons.find(l => l._id === selectedLesson._id) || selectedLesson)

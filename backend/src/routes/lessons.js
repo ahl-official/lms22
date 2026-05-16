@@ -83,12 +83,13 @@ router.get('/module/:moduleId', authenticate, async (req, res, next) => {
             .populate({
                 path: 'test_id',
                 select: 'title test_type passing_score is_active questions time_limit_minutes max_attempts',
-            });
+            })
+            .lean();
 
         let lessons =
             req.user.role === 'trainee'
                 ? raw.map(stripAnswers)
-                : raw.map((l) => l.toObject());
+                : raw;
 
         if (req.user.role === 'trainee') {
             lessons = await attachProgress(lessons, req.user._id);
@@ -111,12 +112,13 @@ router.get('/course/:courseId', authenticate, async (req, res, next) => {
             .populate({
                 path: 'test_id',
                 select: 'title test_type passing_score is_active',
-            });
+            })
+            .lean();
 
         let lessons =
             req.user.role === 'trainee'
                 ? raw.map(stripAnswers)
-                : raw.map((l) => l.toObject());
+                : raw;
 
         if (req.user.role === 'trainee') {
             lessons = await attachProgress(lessons, req.user._id);
@@ -134,11 +136,11 @@ router.get('/:id', authenticate, async (req, res, next) => {
         const lesson = await Lesson.findById(req.params.id).populate({
             path: 'test_id',
             select: 'title test_type passing_score is_active questions time_limit_minutes max_attempts',
-        });
+        }).lean();
         if (!lesson)
             return res.status(404).json({ success: false, message: 'Lesson not found' });
 
-        let obj = req.user.role === 'trainee' ? stripAnswers(lesson) : lesson.toObject();
+        let obj = req.user.role === 'trainee' ? stripAnswers(lesson) : { ...lesson };
 
         if (req.user.role === 'trainee') {
             const prog = await LessonProgress.findOne({

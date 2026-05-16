@@ -16,5 +16,8 @@ const enrollmentSchema = new mongoose.Schema({
 
 // One enrollment per trainee per course
 enrollmentSchema.index({ trainee_id: 1, course_id: 1 }, { unique: true });
+enrollmentSchema.index({ course_id: 1, createdAt: -1 });
+enrollmentSchema.index({ trainee_id: 1, createdAt: -1 });
+enrollmentSchema.index({ course_id: 1, status: 1 });
 
 module.exports = mongoose.model('Enrollment', enrollmentSchema);

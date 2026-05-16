@@ -88,4 +88,9 @@ userSchema.methods.toPublic = function () {
   return obj;
 };
 
+userSchema.index({ role: 1, is_active: 1, last_login_at: -1 });
+userSchema.index({ roles: 1, is_active: 1, last_login_at: -1 });
+userSchema.index({ category_id: 1, role: 1, is_active: 1 });
+userSchema.index({ category_ids: 1, roles: 1, is_active: 1 });
+
 module.exports = mongoose.model('User', userSchema);

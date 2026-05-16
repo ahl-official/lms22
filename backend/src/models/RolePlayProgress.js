@@ -38,5 +38,6 @@ const rolePlayProgressSchema = new mongoose.Schema(
 
 rolePlayProgressSchema.index({ trainee_id: 1, lesson_id: 1 }, { unique: true });
 rolePlayProgressSchema.index({ course_id: 1, trainee_id: 1 });
+rolePlayProgressSchema.index({ course_id: 1, attempts_used: 1, passed: 1, unlocked_by_trainer: 1 });
 
 module.exports = mongoose.model('RolePlayProgress', rolePlayProgressSchema);

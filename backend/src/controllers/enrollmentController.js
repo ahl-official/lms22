@@ -63,12 +63,13 @@ exports.getMyEnrollments = async (req, res, next) => {
         match: { is_published: true },
         select: 'title description video_url video_source requires_voice_test passing_score duration_hours tags thumbnail_url',
       })
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     const result = enrollments
       .filter(e => !!e.course_id)
       .map(e => ({
-        ...e.toObject(),
+        ...e,
         course_title: e.course_id.title,
         requires_voice_test: e.course_id.requires_voice_test,
         duration_hours: e.course_id.duration_hours,
@@ -89,7 +90,8 @@ exports.getCourseEnrollments = async (req, res, next) => {
   try {
     const enrollments = await Enrollment.find({ course_id: req.params.courseId })
       .populate('trainee_id', 'name email')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
     res.json({ success: true, enrollments });
   } catch (err) {
     next(err);

@@ -1,5 +1,20 @@
 import axios from 'axios'
 
+let cachedAuthRaw = null
+let cachedToken = null
+
+const getAuthToken = () => {
+  const raw = localStorage.getItem('lms-auth') || '{}'
+  if (raw === cachedAuthRaw) return cachedToken
+  cachedAuthRaw = raw
+  try {
+    cachedToken = JSON.parse(raw)?.state?.token || null
+  } catch {
+    cachedToken = null
+  }
+  return cachedToken
+}
+
 const api = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
@@ -7,8 +22,7 @@ const api = axios.create({
 
 api.interceptors.request.use(
   (config) => {
-    const auth = JSON.parse(localStorage.getItem('lms-auth') || '{}')
-    const token = auth?.state?.token
+    const token = getAuthToken()
     if (token) config.headers.Authorization = `Bearer ${token}`
     return config
   },

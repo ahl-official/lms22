@@ -13,22 +13,42 @@ router.get('/course/:courseId', authenticate, async (req, res, next) => {
         const filter = { course_id: req.params.courseId };
         if (req.user.role === 'trainee') filter.is_published = true;
 
-        const modules = await Module.find(filter).sort({ order: 1, createdAt: 1 });
+        const modules = await Module.find(filter).sort({ order: 1, createdAt: 1 }).lean();
 
         // ── Trainer / Admin — attach counts ───────────────────────────────────
         if (req.user.role !== 'trainee') {
-            const modulesWithCounts = await Promise.all(modules.map(async (m) => {
-                const obj = m.toObject();
-                const [lesson_count, test_count, draft_count] = await Promise.all([
-                    Lesson.countDocuments({ module_id: m._id, is_published: true }),
-                    Test.countDocuments({ module_id: m._id, is_active: true }),
-                    Test.countDocuments({ module_id: m._id, is_active: false }),
-                ]);
-                obj.lesson_count = lesson_count;
-                obj.test_count = test_count;
-                obj.draft_count = draft_count;
-                return obj;
-            }));
+            const moduleIds = modules.map(m => m._id);
+            const [lessonCounts, testCounts] = await Promise.all([
+                Lesson.aggregate([
+                    { $match: { module_id: { $in: moduleIds }, is_published: true } },
+                    { $group: { _id: '$module_id', count: { $sum: 1 } } },
+                ]),
+                Test.aggregate([
+                    { $match: { module_id: { $in: moduleIds } } },
+                    { $group: { _id: { module_id: '$module_id', active: '$is_active' }, count: { $sum: 1 } } },
+                ]),
+            ]);
+
+            const lessonCountMap = {};
+            for (const row of lessonCounts) lessonCountMap[row._id.toString()] = row.count;
+
+            const testCountMap = {};
+            const draftCountMap = {};
+            for (const row of testCounts) {
+                const key = row._id.module_id.toString();
+                if (row._id.active) testCountMap[key] = row.count;
+                else draftCountMap[key] = row.count;
+            }
+
+            const modulesWithCounts = modules.map((m) => {
+                const key = m._id.toString();
+                return {
+                    ...m,
+                    lesson_count: lessonCountMap[key] || 0,
+                    test_count: testCountMap[key] || 0,
+                    draft_count: draftCountMap[key] || 0,
+                };
+            });
             return res.json({ success: true, modules: modulesWithCounts });
         }
 
@@ -39,7 +59,7 @@ router.get('/course/:courseId', authenticate, async (req, res, next) => {
         const lessonDocs = await Lesson.find(
             { module_id: { $in: moduleIds }, is_published: true },
             'module_id'
-        );
+        ).lean();
         const totalByMod = {};
         for (const l of lessonDocs) {
             const k = l.module_id.toString();
@@ -64,13 +84,14 @@ router.get('/course/:courseId', authenticate, async (req, res, next) => {
         }
 
         const result = modules.map((mod, idx) => {
-            const obj = mod.toObject();
             const k = mod._id.toString();
-            obj.lesson_count = totalByMod[k] || 0;
-            obj.lessons_completed = doneByMod[k] || 0;
-            obj.is_completed = completedSet.has(k);
-            obj.is_locked = idx === 0 ? false : !completedSet.has(modules[idx - 1]._id.toString());
-            return obj;
+            return {
+                ...mod,
+                lesson_count: totalByMod[k] || 0,
+                lessons_completed: doneByMod[k] || 0,
+                is_completed: completedSet.has(k),
+                is_locked: idx === 0 ? false : !completedSet.has(modules[idx - 1]._id.toString()),
+            };
         });
 
         res.json({ success: true, modules: result });

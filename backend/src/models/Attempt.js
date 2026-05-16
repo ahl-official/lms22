@@ -31,4 +31,9 @@ const attemptSchema = new mongoose.Schema({
   submitted_at: { type: Date, default: Date.now },
 }, { timestamps: true });
 
+attemptSchema.index({ trainee_id: 1, submitted_at: -1 });
+attemptSchema.index({ course_id: 1, submitted_at: -1 });
+attemptSchema.index({ test_id: 1, status: 1, score: 1 });
+attemptSchema.index({ course_id: 1, test_type: 1, submitted_at: -1 });
+
 module.exports = mongoose.model('Attempt', attemptSchema);

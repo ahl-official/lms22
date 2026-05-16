@@ -22,4 +22,8 @@ const courseSchema = new mongoose.Schema({
   }],
 }, { timestamps: true });
 
+courseSchema.index({ category_id: 1, is_published: 1, createdAt: -1 });
+courseSchema.index({ created_by: 1, createdAt: -1 });
+courseSchema.index({ is_published: 1, createdAt: -1 });
+
 module.exports = mongoose.model('Course', courseSchema);
