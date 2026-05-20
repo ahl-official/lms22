@@ -743,16 +743,30 @@ const roleplayPairs = (attempt) => {
 
 const assessmentPairs = (attempt) => {
   if (Array.isArray(attempt.questions_snapshot) && attempt.questions_snapshot.length) {
-    return attempt.questions_snapshot.map((question, index) => ({
-      question: question.question || question.prompt || `Question ${index + 1}`,
-      answer: question.user_answer ?? '',
-      score: question.answer_score ?? null,
-      feedback: question.feedback || null,
-      feedback_tier: question.feedback_tier || null,
-      correct_answer: question.correct_answer || null,
-      earned_points: question.earned_points ?? null,
-      points: question.points ?? null,
-    }));
+    return attempt.questions_snapshot.map((question, index) => {
+      const points = Number(question.points);
+      const earnedPoints = Number(question.earned_points);
+      let score = question.answer_score ?? question.score ?? null;
+
+      if (score == null && Number.isFinite(points) && points > 0 && Number.isFinite(earnedPoints)) {
+        score = Math.round((earnedPoints / points) * 100) / 10;
+      }
+      if (score == null && typeof question.is_correct === 'boolean') {
+        score = question.is_correct ? 10 : 0;
+      }
+
+      return {
+        question: question.question || question.prompt || `Question ${index + 1}`,
+        answer: question.user_answer ?? '',
+        score,
+        is_correct: question.is_correct ?? null,
+        feedback: question.feedback || null,
+        feedback_tier: question.feedback_tier || null,
+        correct_answer: question.correct_answer || null,
+        earned_points: question.earned_points ?? null,
+        points: question.points ?? null,
+      };
+    });
   }
 
   if (attempt.voice_transcript) {

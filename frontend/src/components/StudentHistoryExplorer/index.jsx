@@ -16,6 +16,23 @@ function initials(name) {
   return (name || '?').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()
 }
 
+const questionScoreLabel = (qa, attempt) => {
+  const direct = Number(qa?.score)
+  if (qa?.score !== null && qa?.score !== undefined && qa?.score !== '' && Number.isFinite(direct)) {
+    return `${Math.round(direct * 10) / 10}/10`
+  }
+
+  const earned = Number(qa?.earned_points)
+  const points = Number(qa?.points)
+  if (Number.isFinite(earned) && Number.isFinite(points) && points > 0) {
+    return `${Math.round((earned / points) * 100) / 10}/10`
+  }
+
+  if (typeof qa?.is_correct === 'boolean') return qa.is_correct ? '10/10' : '0/10'
+  if (attempt?.score != null) return `Overall ${Math.round(Number(attempt.score))}%`
+  return null
+}
+
 function AttemptCard({ attempt, type, student }) {
   const qas = attempt.qa || []
   const isAssessment = type === 'assessment attempt'
@@ -57,14 +74,18 @@ function AttemptCard({ attempt, type, student }) {
         <div className="space-y-3">
           {qas.map((qa, idx) => (
             <div key={idx} className="bg-white border border-gray-100 rounded-xl p-3">
+              {(() => {
+                const scoreLabel = questionScoreLabel(qa, attempt)
+                return (
+                  <>
               <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">Question {idx + 1}</p>
               <p className="text-sm text-gray-800">{qa.question || 'Question not saved'}</p>
               <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mt-3 mb-1">Answer</p>
               <p className="text-sm text-gray-700 whitespace-pre-wrap">{qa.answer || 'No answer saved'}</p>
-              {qa.score != null && (
+              {scoreLabel && (
                 <>
                   <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mt-3 mb-1">Question score</p>
-                  <p className="text-sm text-brand-700 font-semibold">{Math.round(Number(qa.score) * 10) / 10}/10</p>
+                  <p className="text-sm text-brand-700 font-semibold">{scoreLabel}</p>
                 </>
               )}
               {qa.feedback && (
@@ -79,6 +100,9 @@ function AttemptCard({ attempt, type, student }) {
                   <p className="text-sm text-green-700">{qa.correct_answer}</p>
                 </>
               )}
+                  </>
+                )
+              })()}
             </div>
           ))}
         </div>
