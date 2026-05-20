@@ -26,13 +26,24 @@ function Waveform({ active }) {
     )
 }
 
-function FeedbackBadge({ tier }) {
-    if (tier === 'positive') return (
+const feedbackTierFromScore = (score, fallbackTier = 'constructive') => {
+    const numeric = Number(score)
+    if (Number.isFinite(numeric)) {
+        if (numeric >= 8) return 'positive'
+        if (numeric >= 5) return 'constructive'
+        return 'corrective'
+    }
+    return fallbackTier || 'constructive'
+}
+
+function FeedbackBadge({ tier, score }) {
+    const displayTier = feedbackTierFromScore(score, tier)
+    if (displayTier === 'positive') return (
         <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-100 px-2.5 py-1 rounded-full">
             <ThumbsUp size={11} /> Excellent
         </span>
     )
-    if (tier === 'corrective') return (
+    if (displayTier === 'corrective') return (
         <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-100 px-2.5 py-1 rounded-full">
             <ThumbsDown size={11} /> Needs Work
         </span>
@@ -98,7 +109,7 @@ function ResultScreen({ result, courseTitle, conversation, onDone }) {
                                 {turn.evaluation && (
                                     <div className="space-y-1">
                                         <div className="flex items-center gap-2">
-                                            <FeedbackBadge tier={turn.evaluation.feedback_tier} />
+                                            <FeedbackBadge tier={turn.evaluation.feedback_tier} score={turn.evaluation.overall_score} />
                                             {turn.evaluation.overall_score != null && (
                                                 <span className="text-xs font-bold text-gray-600">
                                                     {Math.round(turn.evaluation.overall_score * 10) / 10}/10
@@ -466,14 +477,14 @@ export default function VoiceTest() {
                 )}
 
                 {phase === 'feedback' && currentFeedback && (
-                    <div className={`rounded-3xl shadow-card p-5 border-2 ${currentFeedback.feedback_tier === 'positive' ? 'bg-green-50 border-green-200'
-                            : currentFeedback.feedback_tier === 'corrective' ? 'bg-red-50 border-red-200'
+                    <div className={`rounded-3xl shadow-card p-5 border-2 ${feedbackTierFromScore(currentFeedback.overall_score, currentFeedback.feedback_tier) === 'positive' ? 'bg-green-50 border-green-200'
+                            : feedbackTierFromScore(currentFeedback.overall_score, currentFeedback.feedback_tier) === 'corrective' ? 'bg-red-50 border-red-200'
                                 : 'bg-amber-50 border-amber-200'
                         }`}>
                         <div className="flex items-center gap-2 mb-3">
                             <Volume2 size={15} className="text-gray-500 animate-pulse" />
                             <p className="text-xs font-semibold text-gray-600">AI Feedback</p>
-                            <FeedbackBadge tier={currentFeedback.feedback_tier} />
+                            <FeedbackBadge tier={currentFeedback.feedback_tier} score={currentFeedback.overall_score} />
                             {currentFeedback.overall_score != null && (
                                 <span className="ml-auto text-sm font-bold text-gray-700">
                                     {Math.round(currentFeedback.overall_score * 10) / 10}/10

@@ -55,6 +55,86 @@ const extractKeywords = (text) =>
     .split(/[\s,;:.!?'"()\[\]]+/)
     .filter(w => w.length > 3 && !STOP_WORDS.has(w));
 
+const clampNumber = (value, min, max) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return min;
+  return Math.max(min, Math.min(max, numeric));
+};
+
+const isBlankAnswer = (answer) => {
+  const normalized = (answer || '').toString().trim().toLowerCase();
+  return !normalized ||
+    normalized === '(no response)' ||
+    normalized === 'no response' ||
+    normalized === 'n/a' ||
+    normalized === 'na';
+};
+
+const answerTier = (scoreOutOfTen) => {
+  if (scoreOutOfTen >= 8) return 'positive';
+  if (scoreOutOfTen >= 5) return 'constructive';
+  return 'corrective';
+};
+
+const normalizeEvaluation = (evaluation, userAnswer) => {
+  if (isBlankAnswer(userAnswer)) {
+    return {
+      ...evaluation,
+      overall_score: 0,
+      feedback_tier: 'corrective',
+      what_correct: '',
+      what_missed: evaluation?.what_missed || 'No answer was provided.',
+      feedback: 'No response was captured, so this question scores 0. Next time, give at least one specific detail from the lesson.',
+      spoken_feedback: 'No response was captured, so this one scores zero. Try giving one specific detail next time.',
+    };
+  }
+
+  const score = clampNumber(evaluation?.overall_score, 0, 10);
+  return {
+    ...evaluation,
+    overall_score: score,
+    feedback_tier: answerTier(score),
+  };
+};
+
+const scoreFromQuestionEvaluations = (conversation = []) => {
+  const scores = conversation
+    .map(turn => Number(turn?.evaluation?.overall_score))
+    .filter(Number.isFinite)
+    .map(score => clampNumber(score, 0, 10) * 10);
+
+  if (!scores.length) return null;
+  return Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
+};
+
+const hasAnsweredAnyQuestion = (conversation = []) =>
+  conversation.some(turn => !isBlankAnswer(turn?.answer));
+
+const normalizeBrandTerms = (value, sourceText = '') => {
+  const source = (sourceText || '').toLowerCase();
+  const shouldUseAmericanHairline = source.includes('american hairline');
+
+  if (typeof value === 'string') {
+    if (!shouldUseAmericanHairline) return value;
+    return value
+      .replace(/\bAmerican Airlines\b/gi, 'American Hairline')
+      .replace(/\bAmerican Airline\b/gi, 'American Hairline')
+      .replace(/\bAmerican Airline's\b/gi, "American Hairline's");
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(item => normalizeBrandTerms(item, sourceText));
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, normalizeBrandTerms(item, sourceText)])
+    );
+  }
+
+  return value;
+};
+
 /**
  * Score a short-answer response via keyword overlap.
  * Returns true if user's answer covers ≥ 40% of expected keywords.
@@ -99,16 +179,18 @@ const shortAnswerCredit = (userAns, correctAns, keyPoints = []) => {
     ...keyPoints.flatMap(kp => extractKeywords(kp)),
   ];
 
-  if (!expectedKeywords.length) return trimmed.split(/\s+/).length >= 3 ? 0.8 : 0.5;
+  if (!expectedKeywords.length) return trimmed.split(/\s+/).length >= 3 ? 0.6 : 0.35;
 
   const userLower = trimmed.toLowerCase();
   const userKeywords = new Set(extractKeywords(userAns));
   const matched = expectedKeywords.filter(k => userKeywords.has(k) || userLower.includes(k));
   const ratio = matched.length / expectedKeywords.length;
 
-  if (ratio >= 0.15) return 0.85;
-  if (trimmed.split(/\s+/).length >= 5) return 0.7;
-  return 0.45;
+  if (ratio >= 0.5) return 0.85;
+  if (ratio >= 0.25) return 0.65;
+  if (ratio >= 0.15) return 0.45;
+  if (trimmed.split(/\s+/).length >= 5) return 0.25;
+  return 0.1;
 };
 
 // ── Adaptive difficulty based on past attempt scores ──────────────────────────
@@ -142,10 +224,12 @@ const generateTest = async (transcript, { testType = 'written', questionCount = 
     ? `You are an expert learning assessor. Generate ${questionCount} open-ended questions for a voice assessment.
 Order questions from EASIEST to HARDEST (Progressive Difficulty).
 Question mix: ${dist}
+Preserve exact names from the course/transcript. If the transcript says "American Hairline", never rewrite it as "American Airline" or "American Airlines".
 Return ONLY valid JSON, no markdown:
 {"questions":[{"question":"string","type":"short_answer","difficulty":"${difficulty}","is_objection":false,"expected_answer":"string","key_points":["a","b","c"],"points":2}]}`
     : `You are an expert learning assessor. Generate ${questionCount} multiple choice questions.
 Order questions from EASIEST to HARDEST.
+Preserve exact names from the course/transcript. If the transcript says "American Hairline", never rewrite it as "American Airline" or "American Airlines".
 Return ONLY valid JSON, no markdown:
 {"questions":[{"question":"string","type":"mcq","options":["A","B","C","D"],"correct_answer":"A","difficulty":"${difficulty}","points":1}]}`;
 
@@ -161,31 +245,48 @@ Return ONLY valid JSON, no markdown:
   const _raw = response.choices[0].message.content;
   console.log('[generateTest] raw:', _raw.slice(0, 800));
   const parsed = parseJSON(_raw);
-  return parsed.questions || [];
+  return normalizeBrandTerms(parsed.questions || [], `${courseTitle}\n${transcript}`);
 };
 
 // ── Score written attempt ─────────────────────────────────────────────────────
-// FIX: short_answer questions now use keyword-overlap scoring, not "non-empty = pass".
+// MCQs remain objective; open answers use the same trainer-style judgment as roleplay.
 const scoreWrittenAttempt = async (questions, answers) => {
   let correct = 0;
   let total = 0;
+  const breakdown = [];
 
-  const breakdown = questions.map((q, i) => {
+  for (const [i, q] of questions.entries()) {
     const userAns = (answers[i] || '').toString().trim().toLowerCase();
     const correctAns = (q.correct_answer || '').toString().trim().toLowerCase();
 
     let isCorrect;
     let earned = 0;
+    let evaluation = null;
     if (q.type === 'mcq') {
       isCorrect = userAns === correctAns;
       earned = isCorrect ? (q.points || 1) : 0;
     } else {
-      // short_answer: forgiving partial credit for useful answers
-      const credit = shortAnswerCredit(
-        answers[i] || '',
-        q.correct_answer || '',
-        q.key_points || []
-      );
+      let credit;
+      try {
+        evaluation = await evaluateAnswer({
+          question: {
+            question: q.question,
+            expected_answer: q.expected_answer || q.correct_answer || '',
+            key_points: q.key_points || [],
+            is_objection: q.is_objection || false,
+          },
+          userAnswer: answers[i] || '',
+        });
+        credit = clampNumber(evaluation.overall_score, 0, 10) / 10;
+      } catch (err) {
+        console.warn('Written answer evaluation failed, using keyword fallback:', err.message);
+        credit = shortAnswerCredit(
+          answers[i] || '',
+          q.correct_answer || q.expected_answer || '',
+          q.key_points || []
+        );
+      }
+
       earned = (q.points || 1) * credit;
       isCorrect = credit >= 0.8;
     }
@@ -193,14 +294,18 @@ const scoreWrittenAttempt = async (questions, answers) => {
     correct += earned;
     total += q.points || 1;
 
-    return {
+    breakdown.push({
       question: q.question,
       user_answer: answers[i],
-      correct_answer: q.correct_answer,
+      correct_answer: q.correct_answer || q.expected_answer,
       is_correct: isCorrect,
       points: q.points || 1,
-    };
-  });
+      earned_points: Math.round(earned * 100) / 100,
+      feedback: evaluation?.feedback || null,
+      feedback_tier: evaluation?.feedback_tier || null,
+      answer_score: evaluation?.overall_score ?? null,
+    });
+  }
 
   const score = total > 0 ? Math.round((correct / total) * 100) : 0;
   return { score, breakdown };
@@ -208,6 +313,10 @@ const scoreWrittenAttempt = async (questions, answers) => {
 
 // ── Per-answer evaluation ─────────────────────────────────────────────────────
 const evaluateAnswer = async ({ question, userAnswer, courseTranscript = '', category = '' }) => {
+  if (isBlankAnswer(userAnswer)) {
+    return normalizeEvaluation({}, userAnswer);
+  }
+
   const client = getChatClient();
 
   const isObjection = question.is_objection === true ||
@@ -310,9 +419,6 @@ Return ONLY valid JSON:
   // Ensure feedback tier and spoken feedback
   try {
     const score = parseFloat(evaluation.overall_score) || 0;
-    if (!evaluation.feedback_tier) {
-      evaluation.feedback_tier = score >= 8 ? 'positive' : score >= 5 ? 'constructive' : 'corrective';
-    }
     if (userAnswer.trim().split(/\s+/).length >= 8 && score >= 6 && score < 8) {
       const clientMoves = [
         /book|booking|appointment|schedule|consult/i,
@@ -326,19 +432,33 @@ Return ONLY valid JSON:
         evaluation.feedback = evaluation.feedback || 'Good client-centered answer. You gave the customer a useful next step and kept the conversation moving.';
       }
     }
+    evaluation = normalizeEvaluation(evaluation, userAnswer);
     if (!evaluation.spoken_feedback) {
-      const finalScore = parseFloat(evaluation.overall_score) || score;
+      const finalScore = parseFloat(evaluation.overall_score) || 0;
       if (finalScore >= 8) evaluation.spoken_feedback = 'Nice work, that was client-friendly and moved the conversation forward.';
-      else if (score >= 5) evaluation.spoken_feedback = 'Nice start. You covered the core idea; add one more detail next time.';
+      else if (finalScore >= 5) evaluation.spoken_feedback = 'Nice start. You covered the core idea; add one more detail next time.';
       else evaluation.spoken_feedback = 'Good try. Let us tighten the answer and make it clearer for the client.';
     }
   } catch (_) { }
 
-  return evaluation;
+  return normalizeEvaluation(evaluation, userAnswer);
 };
 
 // ── Score single audio file voice attempt ─────────────────────────────────────
 const scoreVoiceAttempt = async (voiceTranscript, questions) => {
+  if (isBlankAnswer(voiceTranscript)) {
+    return {
+      score: 0,
+      feedback: 'No response was captured, so this assessment scores 0. Try again with clear answers to each question.',
+      rubric_breakdown: {
+        content_accuracy: 0,
+        communication_clarity: 0,
+        completeness: 0,
+        confidence_score: 0,
+      },
+    };
+  }
+
   const client = getChatClient();
   const questionsText = questions.map((q, i) => `${i + 1}. ${q.question}`).join('\n');
 
@@ -363,14 +483,10 @@ Return ONLY valid JSON:
   });
 
   const parsed = parseJSON(response.choices[0].message.content);
-  if (voiceTranscript.trim().split(/\s+/).length >= 20 && parsed.score >= 60 && parsed.score < 70) {
-    parsed.score = 70;
-    if (parsed.rubric_breakdown) {
-      for (const key of Object.keys(parsed.rubric_breakdown)) {
-        if (parsed.rubric_breakdown[key] >= 60 && parsed.rubric_breakdown[key] < 70) {
-          parsed.rubric_breakdown[key] = 70;
-        }
-      }
+  parsed.score = Math.round(clampNumber(parsed.score, 0, 100));
+  if (parsed.rubric_breakdown) {
+    for (const key of Object.keys(parsed.rubric_breakdown)) {
+      parsed.rubric_breakdown[key] = Math.round(clampNumber(parsed.rubric_breakdown[key], 0, 100));
     }
   }
   return parsed;
@@ -409,8 +525,34 @@ Return ONLY the question text.`,
 
 // ── Score full conversation at end of session ─────────────────────────────────
 const scoreConversation = async ({ courseTitle, transcript, conversation }) => {
-  const client = getChatClient();
+  if (!hasAnsweredAnyQuestion(conversation)) {
+    return {
+      score: 0,
+      feedback: 'No responses were captured, so this assessment scores 0. Try again and answer each question with at least one lesson-specific detail.',
+      strengths: [],
+      improvement_areas: [
+        {
+          topic: 'Answer completeness',
+          issue: 'No answer was provided for the assessment questions.',
+          action: 'Give a clear spoken response for each question before moving on.',
+        },
+      ],
+      rubric_breakdown: {
+        content_accuracy: 0,
+        communication_clarity: 0,
+        completeness: 0,
+        confidence_score: 0,
+      },
+      question_scores: conversation.map(turn => ({
+        question: turn.question,
+        answer: turn.answer,
+        score: 0,
+        feedback: 'No response was captured.',
+      })),
+    };
+  }
 
+  const client = getChatClient();
   const conversationText = conversation
     .map((t, i) => `Q${i + 1}: ${t.question}\nAnswer: ${t.answer}`)
     .join('\n\n');
@@ -468,15 +610,15 @@ Rules:
   });
 
   const parsed = parseJSON(response.choices[0].message.content);
-  const hasSubstantiveAnswers = conversation.some(t => (t.answer || '').trim().split(/\s+/).length >= 8);
-  if (hasSubstantiveAnswers && parsed.score >= 60 && parsed.score < 70) {
-    parsed.score = 70;
-    if (parsed.rubric_breakdown) {
-      for (const key of Object.keys(parsed.rubric_breakdown)) {
-        if (parsed.rubric_breakdown[key] >= 60 && parsed.rubric_breakdown[key] < 70) {
-          parsed.rubric_breakdown[key] = 70;
-        }
-      }
+  const modelScore = clampNumber(parsed.score, 0, 100);
+  const questionScore = scoreFromQuestionEvaluations(conversation);
+  parsed.score = Math.round(questionScore == null
+    ? modelScore
+    : (modelScore * 0.55) + (questionScore * 0.45));
+
+  if (parsed.rubric_breakdown) {
+    for (const key of Object.keys(parsed.rubric_breakdown)) {
+      parsed.rubric_breakdown[key] = Math.round(clampNumber(parsed.rubric_breakdown[key], 0, 100));
     }
   }
   return parsed;
@@ -498,4 +640,5 @@ module.exports = {
   scoreConversation,
   determineAdaptiveDifficulty,
   generateEmbedding,
+  normalizeBrandTerms,
 };

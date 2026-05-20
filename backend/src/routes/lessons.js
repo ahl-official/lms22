@@ -10,7 +10,7 @@ const Module = require('../models/Module');
 const Enrollment = require('../models/Enrollment');
 const { authenticate, authorize } = require('../middleware/auth');
 const { detectContentSource, fetchTranscript } = require('../services/transcriptService');
-const { generateTest } = require('../services/aiService');
+const { generateTest, normalizeBrandTerms } = require('../services/aiService');
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -490,7 +490,8 @@ router.post('/:id/ai-notes', authenticate, async (req, res, next) => {
             : Infinity;
 
         if (cacheAge < 24 * 60 * 60 * 1000 && lesson.ai_notes?.summary && !req.body.force) {
-            return res.json({ success: true, notes: lesson.ai_notes, cached: true });
+            const notes = normalizeBrandTerms(lesson.ai_notes, `${lesson.title}\n${lesson.transcript || ''}`);
+            return res.json({ success: true, notes, cached: true });
         }
 
         const prompt = `You are a study assistant for an LMS. Given this lesson transcript, generate study materials.
@@ -508,6 +509,7 @@ Return ONLY valid JSON (no markdown, no code fences):
 }
 
 Rules:
+- Preserve exact brand/company names from the lesson transcript. If it says "American Hairline", never write "American Airline" or "American Airlines".
 - Checklist must summarize everything the trainee should actually do after watching/reading the lesson.
 - Checklist items must be practical, action-oriented, and start with a verb.
 - Use 5-8 checklist items.
@@ -533,7 +535,10 @@ Rules:
         );
 
         const raw = response.data.choices?.[0]?.message?.content || '';
-        const notes = JSON.parse(raw.replace(/```json|```/g, '').trim());
+        const notes = normalizeBrandTerms(
+            JSON.parse(raw.replace(/```json|```/g, '').trim()),
+            `${lesson.title}\n${lesson.transcript || ''}`
+        );
 
         lesson.ai_notes = { ...notes, generated_at: new Date() };
         await lesson.save();

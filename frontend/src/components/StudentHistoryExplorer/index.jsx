@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
-import { ClipboardList, MessageSquare, Search, Users } from 'lucide-react'
+import { ClipboardList, Download, MessageSquare, Search, Users } from 'lucide-react'
 import { analyticsAPI } from '../../services/api'
 import ScoreBadge from '../ScoreBadge'
+import { downloadAssessmentReport } from '../../utils/reportDownload'
 
 const relativeTime = (date) => {
   if (!date) return 'Never'
@@ -15,8 +16,9 @@ function initials(name) {
   return (name || '?').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()
 }
 
-function AttemptCard({ attempt, type }) {
+function AttemptCard({ attempt, type, student }) {
   const qas = attempt.qa || []
+  const isAssessment = type === 'assessment attempt'
   return (
     <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
       <div className="flex items-start justify-between gap-3 mb-3">
@@ -28,7 +30,19 @@ function AttemptCard({ attempt, type }) {
             {attempt.date ? ` - ${relativeTime(attempt.date)}` : ''}
           </p>
         </div>
-        {attempt.score != null && <ScoreBadge score={attempt.score} size="sm" />}
+        <div className="flex items-center gap-2">
+          {isAssessment && (
+            <button
+              type="button"
+              onClick={() => downloadAssessmentReport({ student, attempt, portal: 'LMS' })}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:border-brand-200 hover:text-brand-600 transition-colors"
+              title="Download assessment report"
+            >
+              <Download size={13} /> Report
+            </button>
+          )}
+          {attempt.score != null && <ScoreBadge score={attempt.score} size="sm" />}
+        </div>
       </div>
 
       {(attempt.summary || attempt.feedback) && (
@@ -47,6 +61,12 @@ function AttemptCard({ attempt, type }) {
               <p className="text-sm text-gray-800">{qa.question || 'Question not saved'}</p>
               <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mt-3 mb-1">Answer</p>
               <p className="text-sm text-gray-700 whitespace-pre-wrap">{qa.answer || 'No answer saved'}</p>
+              {qa.score != null && (
+                <>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mt-3 mb-1">Question score</p>
+                  <p className="text-sm text-brand-700 font-semibold">{Math.round(Number(qa.score) * 10) / 10}/10</p>
+                </>
+              )}
               {qa.feedback && (
                 <>
                   <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mt-3 mb-1">AI feedback</p>
@@ -201,6 +221,7 @@ export default function StudentHistoryExplorer({ title = 'Student History', subt
                       key={item.id}
                       attempt={item}
                       type={mode === 'roleplaying' ? 'roleplay attempt' : 'assessment attempt'}
+                      student={selected}
                     />
                   ))}
                 </div>

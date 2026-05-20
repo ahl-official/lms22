@@ -742,6 +742,19 @@ const roleplayPairs = (attempt) => {
 };
 
 const assessmentPairs = (attempt) => {
+  if (Array.isArray(attempt.questions_snapshot) && attempt.questions_snapshot.length) {
+    return attempt.questions_snapshot.map((question, index) => ({
+      question: question.question || question.prompt || `Question ${index + 1}`,
+      answer: question.user_answer ?? '',
+      score: question.answer_score ?? null,
+      feedback: question.feedback || null,
+      feedback_tier: question.feedback_tier || null,
+      correct_answer: question.correct_answer || null,
+      earned_points: question.earned_points ?? null,
+      points: question.points ?? null,
+    }));
+  }
+
   if (attempt.voice_transcript) {
     const pairs = [];
     const regex = /Q:\s*([\s\S]*?)\nA:\s*([\s\S]*?)(?=\n\nQ:|$)/g;
@@ -755,9 +768,7 @@ const assessmentPairs = (attempt) => {
     if (pairs.length) return pairs;
   }
 
-  const questions = Array.isArray(attempt.questions_snapshot)
-    ? attempt.questions_snapshot
-    : (attempt.test_id?.questions || []);
+  const questions = attempt.test_id?.questions || [];
   const answers = attempt.answers || {};
 
   return questions.map((question, index) => ({
@@ -803,7 +814,14 @@ router.get('/student-history', authenticate, authorize('admin', 'trainer'), asyn
       Attempt.find({ ...courseFilter, status: 'scored' })
         .select('trainee_id course_id test_id test_type answers questions_snapshot voice_transcript score passing_score submitted_at ai_feedback')
         .populate('course_id', 'title')
-        .populate('test_id', 'title test_type questions')
+        .populate({
+          path: 'test_id',
+          select: 'title test_type questions module_id lesson_id',
+          populate: [
+            { path: 'module_id', select: 'title order' },
+            { path: 'lesson_id', select: 'title' },
+          ],
+        })
         .sort({ submitted_at: -1 })
         .limit(3000)
         .lean(),
@@ -840,6 +858,8 @@ router.get('/student-history', authenticate, authorize('admin', 'trainer'), asyn
         id: attempt._id,
         title: attempt.test_id?.title || 'Assessment',
         course_title: attempt.course_id?.title || 'Unknown course',
+        module_title: attempt.test_id?.module_id?.title || null,
+        lesson_title: attempt.test_id?.lesson_id?.title || null,
         test_type: attempt.test_type,
         score: attempt.score,
         passing_score: attempt.passing_score || 60,

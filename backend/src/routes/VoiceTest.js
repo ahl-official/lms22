@@ -12,6 +12,7 @@ const {
     scoreConversation,
     evaluateAnswer,
     determineAdaptiveDifficulty,
+    normalizeBrandTerms,
 } = require('../services/aiService');
 const { notifyAssessmentComplete } = require('../services/wahaService');
 
@@ -46,10 +47,11 @@ router.get('/start/:courseId', authenticate, async (req, res, next) => {
         if (!course) return res.status(404).json({ success: false, message: 'Course not found' });
 
         let test = null;
+        let lesson = null;
 
         // ── Lesson-specific voice test ──────────────────────────────────────────
         if (lesson_id) {
-            const lesson = await Lesson.findById(lesson_id).populate('test_id');
+            lesson = await Lesson.findById(lesson_id).populate('test_id');
             await ensureRolePlayUnlocked(lesson?._id, req.user._id);
             if (lesson?.test_id && lesson.test_id.test_type === 'voice' && lesson.test_id.is_active) {
                 test = lesson.test_id;
@@ -71,20 +73,23 @@ router.get('/start/:courseId', authenticate, async (req, res, next) => {
 
         const firstQuestion = test.questions[0];
         const adaptiveDifficulty = await determineAdaptiveDifficulty(req.user._id, req.params.courseId);
+        const brandSource = `${course.title}\n${lesson_id ? lesson?.title || '' : ''}\n${lesson_id ? lesson?.transcript || '' : ''}\n${course.transcript || ''}`;
+        const safeQuestions = normalizeBrandTerms(test.questions, brandSource);
+        const safeFirstQuestion = safeQuestions[0] || firstQuestion;
 
         res.json({
             success: true,
-            first_question: firstQuestion.question,
+            first_question: safeFirstQuestion.question,
             first_question_obj: {
-                question: firstQuestion.question,
-                expected_answer: firstQuestion.correct_answer || '',
-                key_points: firstQuestion.key_points || [],
-                is_objection: firstQuestion.is_objection || false,
+                question: safeFirstQuestion.question,
+                expected_answer: safeFirstQuestion.correct_answer || '',
+                key_points: safeFirstQuestion.key_points || [],
+                is_objection: safeFirstQuestion.is_objection || false,
             },
             test_id: test._id,
             course_title: course.title,
             adaptive_difficulty: adaptiveDifficulty,
-            fallback_questions: test.questions.map(q => ({
+            fallback_questions: safeQuestions.map(q => ({
                 question: q.question,
                 expected_answer: q.correct_answer || '',
                 key_points: q.key_points || [],
@@ -103,7 +108,7 @@ router.post('/next-question', authenticate, async (req, res, next) => {
         if (!course) return res.status(404).json({ success: false, message: 'Course not found' });
 
         const test = await Test.findById(test_id);
-        const fallbackQuestions = (test?.questions || []).map(q => ({
+        const fallbackQuestions = normalizeBrandTerms(test?.questions || [], `${course.title}\n${course.transcript || ''}`).map(q => ({
             question: q.question,
             expected_answer: q.correct_answer || '',
             key_points: q.key_points || [],
@@ -135,12 +140,12 @@ router.post('/evaluate-answer', authenticate, async (req, res, next) => {
         const course = await Course.findById(course_id).select('transcript title');
 
         const evaluation = await evaluateAnswer({
-            question: {
+            question: normalizeBrandTerms({
                 question: question.question || question,
                 expected_answer: question.expected_answer || question.correct_answer || '',
                 key_points: question.key_points || [],
                 is_objection: question.is_objection || false,
-            },
+            }, `${course?.title || ''}\n${course?.transcript || ''}`),
             userAnswer: user_answer,
             courseTranscript: course?.transcript || '',
             category: course?.title || '',
@@ -179,6 +184,13 @@ router.post('/score', authenticate, async (req, res, next) => {
             test_id: test_id || null,
             enrollment_id: enrollment?._id || null,
             test_type: 'voice',
+            questions_snapshot: conversation.map((turn, index) => ({
+                question: turn.question || `Question ${index + 1}`,
+                user_answer: turn.answer || '',
+                answer_score: turn.evaluation?.overall_score ?? null,
+                feedback: turn.evaluation?.feedback || turn.evaluation?.spoken_feedback || null,
+                feedback_tier: turn.evaluation?.feedback_tier || null,
+            })),
             voice_transcript: conversation.map(t => `Q: ${t.question}\nA: ${t.answer}`).join('\n\n'),
             ai_feedback: result.feedback,
             ai_rubric_breakdown: result.rubric_breakdown,

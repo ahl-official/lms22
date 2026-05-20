@@ -35,6 +35,23 @@ const parseJSON = (raw) => {
     throw new Error('Could not parse JSON from LLM response')
 }
 
+const clampNumber = (value, min, max) => {
+    const numeric = Number(value)
+    if (!Number.isFinite(numeric)) return min
+    return Math.max(min, Math.min(max, numeric))
+}
+
+const isBlankResponse = (value) => {
+    const normalized = (value || '').toString().trim().toLowerCase()
+    return !normalized || normalized === '(no response)' || normalized === 'no response' || normalized === 'n/a' || normalized === 'na'
+}
+
+const coachingTier = (score) => {
+    if (score >= 8) return 'positive'
+    if (score >= 5) return 'constructive'
+    return 'corrective'
+}
+
 const hasAnyRole = (user, roles) =>
     roles.includes(user?.role) || user?.roles?.some(r => roles.includes(r))
 
@@ -686,8 +703,22 @@ Return ONLY valid JSON:
 
 tier: "positive" (8-10), "constructive" (5-7), "corrective" (1-4).`
 
+    if (isBlankResponse(userMessage)) {
+        return {
+            character_reply: "I didn't catch your answer. Could you please explain that once more?",
+            coaching: {
+                score: 0,
+                what_worked: null,
+                tip: 'No response was captured. Answer with at least one lesson-specific detail before moving on.',
+                spoken_feedback: 'No response was captured, so this turn scores zero.',
+                tier: 'corrective',
+            },
+        }
+    }
+
     const res = await callLLM([{ role: 'user', content: prompt }], 600)
     const parsed = parseJSON(res.data.choices[0].message.content)
+    parsed.coaching = parsed.coaching || {}
     const score = Number(parsed?.coaching?.score)
     const hasSubstance = userMessage.trim().split(/\s+/).length >= 8
     const helpfulClientMoves = [
@@ -707,6 +738,8 @@ tier: "positive" (8-10), "constructive" (5-7), "corrective" (1-4).`
         parsed.coaching.what_worked = parsed.coaching.what_worked || 'You gave the client something useful to work with.'
         parsed.coaching.spoken_feedback = parsed.coaching.spoken_feedback || 'Nice start. You helped the client; add one more detail next time.'
     }
+    parsed.coaching.score = clampNumber(parsed.coaching.score, 0, 10)
+    parsed.coaching.tier = coachingTier(parsed.coaching.score)
     return parsed
 }
 
@@ -792,6 +825,25 @@ router.post('/summary', authenticate, async (req, res, next) => {
 
         const lessonSkill = scenario?.lesson_skill || ''
         const keyPoints = (scenario?.lesson_key_points || []).join('; ')
+        const userResponses = conversation.filter(m => m.role === 'user')
+
+        if (!userResponses.some(m => !isBlankResponse(m.content))) {
+            return res.json({
+                success: true,
+                summary: {
+                    overall_score: 0,
+                    grade: 'F',
+                    summary: 'No trainee responses were captured, so this roleplay scores 0. Try again and answer each customer turn with at least one lesson-specific detail.',
+                    strengths: [],
+                    improvements: [{
+                        area: 'Response completeness',
+                        tip: 'Give a clear answer before ending the roleplay turn.',
+                    }],
+                    best_moment: null,
+                    recommended_focus: 'Answer each customer question clearly before ending the turn.',
+                },
+            })
+        }
 
         const prompt = `You evaluated a sales training role-play session.
 
@@ -856,13 +908,7 @@ Return ONLY valid JSON:
 
         const res2 = await callLLM([{ role: 'user', content: prompt }], 700)
         const summary = parseJSON(res2.data.choices[0].message.content)
-        const hasSubstantiveAnswers = conversation
-            .filter(m => m.role === 'user')
-            .some(m => (m.content || '').trim().split(/\s+/).length >= 8)
-        if (hasSubstantiveAnswers && summary.overall_score >= 60 && summary.overall_score < 70) {
-            summary.overall_score = 70
-            summary.grade = 'B-'
-        }
+        summary.overall_score = Math.round(clampNumber(summary.overall_score, 0, 100))
         res.json({ success: true, summary })
     } catch (err) { next(err) }
 })
