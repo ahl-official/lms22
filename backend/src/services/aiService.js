@@ -110,7 +110,7 @@ const scoreFromQuestionEvaluations = (conversation = []) => {
 const hasAnsweredAnyQuestion = (conversation = []) =>
   conversation.some(turn => !isBlankAnswer(turn?.answer));
 
-const normalizeBrandTerms = (value, sourceText = '') => {
+const normalizeBrandTerms = (value, sourceText = '', seen = new WeakSet()) => {
   const source = (sourceText || '').toLowerCase();
   const shouldUseAmericanHairline = source.includes('american hairline');
 
@@ -122,13 +122,24 @@ const normalizeBrandTerms = (value, sourceText = '') => {
       .replace(/\bAmerican Airline's\b/gi, "American Hairline's");
   }
 
+  if (!value || typeof value !== 'object') return value;
+  if (value instanceof Date) return value;
+  if (seen.has(value)) return value;
+  seen.add(value);
+
+  const plainValue = typeof value.toObject === 'function'
+    ? value.toObject({ getters: false, virtuals: false, depopulate: false })
+    : value;
+
   if (Array.isArray(value)) {
-    return value.map(item => normalizeBrandTerms(item, sourceText));
+    return value.map(item => normalizeBrandTerms(item, sourceText, seen));
   }
 
-  if (value && typeof value === 'object') {
+  if (plainValue && typeof plainValue === 'object') {
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, normalizeBrandTerms(item, sourceText)])
+      Object.entries(plainValue)
+        .filter(([key]) => !key.startsWith('$'))
+        .map(([key, item]) => [key, normalizeBrandTerms(item, sourceText, seen)])
     );
   }
 
