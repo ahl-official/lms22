@@ -5,6 +5,23 @@ import { Toaster } from 'react-hot-toast'
 import App from './App'
 import './index.css'
 
+window.addEventListener('error', (event) => {
+  console.error('[ui:runtime_error]', {
+    message: event.message,
+    source: event.filename,
+    line: event.lineno,
+    column: event.colno,
+    stack: event.error?.stack,
+  })
+})
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('[ui:unhandled_rejection]', {
+    reason: event.reason?.message || event.reason,
+    stack: event.reason?.stack,
+  })
+})
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

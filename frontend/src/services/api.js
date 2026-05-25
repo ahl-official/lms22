@@ -24,14 +24,45 @@ api.interceptors.request.use(
   (config) => {
     const token = getAuthToken()
     if (token) config.headers.Authorization = `Bearer ${token}`
+    config.metadata = { startedAt: Date.now() }
     return config
   },
-  (err) => Promise.reject(err)
+  (err) => {
+    console.error('[api:request_error]', {
+      message: err.message,
+      stack: err.stack,
+    })
+    return Promise.reject(err)
+  }
 )
 
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    const durationMs = Date.now() - (res.config.metadata?.startedAt || Date.now())
+    if (durationMs > 3000) {
+      console.warn('[api:slow_response]', {
+        method: res.config.method?.toUpperCase(),
+        url: res.config.url,
+        status: res.status,
+        durationMs,
+      })
+    }
+    return res
+  },
   (err) => {
+    const config = err.config || {}
+    const durationMs = Date.now() - (config.metadata?.startedAt || Date.now())
+    console.error('[api:response_error]', {
+      method: config.method?.toUpperCase(),
+      url: config.url,
+      baseURL: config.baseURL,
+      status: err.response?.status || null,
+      requestId: err.response?.data?.requestId || null,
+      message: err.response?.data?.message || err.message,
+      response: err.response?.data || null,
+      durationMs,
+    })
+
     if (err.response?.status === 401) {
       localStorage.removeItem('lms-auth')
       window.location.href = '/login'

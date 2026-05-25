@@ -431,7 +431,7 @@ export default function VoiceTest() {
                         </div>
                         <button onClick={handleDoneAnswering}
                             className="w-full py-2 rounded-2xl border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-100 transition-colors">
-                            Skip countdown — answer now
+                            Answer
                         </button>
                     </div>
                 )}
