@@ -24,17 +24,7 @@ const getStatus = async (req, res, next) => {
 const sendReport = async (req, res, next) => {
     try {
         const { attemptId } = req.params;
-        const attempt = await Attempt.findById(attemptId)
-            .populate('trainee_id', 'name email phone')
-            .populate({ path: 'course_id', select: 'title created_by', populate: { path: 'created_by', select: 'name phone' } })
-            .populate({
-                path: 'test_id',
-                select: 'title passing_score test_type questions module_id lesson_id',
-                populate: [
-                    { path: 'module_id', select: 'title order' },
-                    { path: 'lesson_id', select: 'title' },
-                ],
-            });
+        const attempt = await loadAttemptForReport(attemptId);
         if (!attempt) return res.status(404).json({ success: false, message: 'Attempt not found' });
         const { results, errors } = await wahaService.notifyAssessmentComplete({
             attempt,
@@ -43,8 +33,35 @@ const sendReport = async (req, res, next) => {
             course: attempt.course_id,
             test: attempt.test_id,
         });
-        const success = results.trainee !== null || results.trainer !== null;
+        const success = Object.values(results).some(Boolean);
         res.json({ success, message: success ? 'Report sent' : 'No messages sent', results, errors: errors.length ? errors : undefined });
+    } catch (err) { next(err); }
+};
+
+const sendMyReport = async (req, res, next) => {
+    try {
+        const { attemptId } = req.params;
+        const attempt = await loadAttemptForReport(attemptId);
+        if (!attempt) return res.status(404).json({ success: false, message: 'Attempt not found' });
+
+        if (!attempt.trainee_id?._id?.equals(req.user._id)) {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+
+        const { results, errors } = await wahaService.notifyAssessmentComplete({
+            attempt,
+            trainee: attempt.trainee_id,
+            trainer: attempt.course_id?.created_by,
+            course: attempt.course_id,
+            test: attempt.test_id,
+        });
+        const success = Object.values(results).some(Boolean);
+        res.json({
+            success,
+            message: success ? 'Report sent to WhatsApp' : 'No WhatsApp message sent. Please check your phone number.',
+            results,
+            errors: errors.length ? errors : undefined,
+        });
     } catch (err) { next(err); }
 };
 
@@ -78,6 +95,18 @@ const sendBulkReports = async (req, res, next) => {
     } catch (err) { next(err); }
 };
 
+const loadAttemptForReport = (attemptId) => Attempt.findById(attemptId)
+    .populate('trainee_id', 'name email phone')
+    .populate({ path: 'course_id', select: 'title created_by', populate: { path: 'created_by', select: 'name phone' } })
+    .populate({
+        path: 'test_id',
+        select: 'title passing_score test_type questions module_id lesson_id',
+        populate: [
+            { path: 'module_id', select: 'title order' },
+            { path: 'lesson_id', select: 'title' },
+        ],
+    });
+
 const testMessage = async (req, res, next) => {
     try {
         const { phone } = req.body;
@@ -92,4 +121,4 @@ const testMessage = async (req, res, next) => {
     }
 };
 
-module.exports = { getStatus, sendReport, sendBulkReports, testMessage };
+module.exports = { getStatus, sendReport, sendMyReport, sendBulkReports, testMessage };

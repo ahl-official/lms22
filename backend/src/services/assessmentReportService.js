@@ -188,13 +188,40 @@ const buildAssessmentReportData = ({ attempt, trainee, trainer, course, test }) 
   };
 };
 
-const addLabelValue = (doc, label, value, x, y, width = 250) => {
+const PAGE = {
+  left: 48,
+  right: 48,
+  bottom: 56,
+  width: 499,
+};
+
+const addLabelValue = (doc, label, value, x, y, width = 225) => {
   doc.font('Helvetica-Bold').fontSize(9).fillColor('#64748b').text(label.toUpperCase(), x, y, { width });
   doc.font('Helvetica').fontSize(11).fillColor('#111827').text(valueOrNA(value), x, y + 13, { width });
 };
 
 const ensureRoom = (doc, height = 120) => {
-  if (doc.y + height > doc.page.height - doc.page.margins.bottom) doc.addPage();
+  if (doc.y + height > doc.page.height - PAGE.bottom) {
+    doc.addPage();
+    doc.y = PAGE.left;
+  }
+};
+
+const sectionTitle = (doc, title, minHeight = 60) => {
+  ensureRoom(doc, minHeight);
+  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(14)
+    .text(title, PAGE.left, doc.y, { width: PAGE.width });
+  doc.moveDown(0.6);
+};
+
+const label = (doc, text) => {
+  doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(8)
+    .text(text.toUpperCase(), PAGE.left, doc.y, { width: PAGE.width });
+};
+
+const body = (doc, text, options = {}) => {
+  doc.fillColor('#111827').font('Helvetica').fontSize(options.size || 10)
+    .text(valueOrNA(text), PAGE.left, doc.y, { width: PAGE.width, lineGap: 3 });
 };
 
 const createAssessmentReportPdfBuffer = (report) => new Promise((resolve, reject) => {
@@ -205,24 +232,24 @@ const createAssessmentReportPdfBuffer = (report) => new Promise((resolve, reject
   doc.on('error', reject);
 
   doc.rect(0, 0, doc.page.width, 110).fill('#111827');
-  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(24).text('Assessment Report', 48, 36);
+  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(24).text('Assessment Report', PAGE.left, 36, { width: PAGE.width });
   doc.font('Helvetica').fontSize(10).fillColor('#cbd5e1')
-    .text(`Generated on ${formatDate(report.generatedAt)}`, 48, 69);
+    .text(`Generated on ${formatDate(report.generatedAt)}`, PAGE.left, 69, { width: PAGE.width });
 
   doc.y = 140;
-  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(14).text('Student and Assessment');
+  sectionTitle(doc, 'Student and Assessment', 210);
   const metaTop = doc.y + 14;
-  addLabelValue(doc, 'Student', report.traineeName, 48, metaTop);
+  addLabelValue(doc, 'Student', report.traineeName, PAGE.left, metaTop);
   addLabelValue(doc, 'Phone', report.traineePhone, 315, metaTop);
-  addLabelValue(doc, 'Course', report.courseTitle, 48, metaTop + 48);
+  addLabelValue(doc, 'Course', report.courseTitle, PAGE.left, metaTop + 48);
   addLabelValue(doc, 'Module', report.moduleTitle, 315, metaTop + 48);
-  addLabelValue(doc, 'Lesson / Chapter', report.lessonTitle, 48, metaTop + 96);
+  addLabelValue(doc, 'Lesson / Chapter', report.lessonTitle, PAGE.left, metaTop + 96);
   addLabelValue(doc, 'Assessment', report.testTitle, 315, metaTop + 96);
-  addLabelValue(doc, 'Type', report.testType, 48, metaTop + 144);
+  addLabelValue(doc, 'Type', report.testType, PAGE.left, metaTop + 144);
   addLabelValue(doc, 'Submitted', formatDate(report.submittedAt), 315, metaTop + 144);
 
   doc.y = metaTop + 205;
-  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(14).text('Score Snapshot');
+  sectionTitle(doc, 'Score Snapshot', 95);
   const scoreTop = doc.y + 12;
   const scoreCards = [
     ['Overall', percent(report.overallScore)],
@@ -231,62 +258,60 @@ const createAssessmentReportPdfBuffer = (report) => new Promise((resolve, reject
     ['Avg Question', report.stats.averageQuestionScore == null ? 'N/A' : `${report.stats.averageQuestionScore}/10`],
   ];
   scoreCards.forEach(([label, value], index) => {
-    const x = 48 + index * 126;
+    const x = PAGE.left + index * 126;
     doc.roundedRect(x, scoreTop, 112, 58, 6).fillAndStroke('#f8fafc', '#e5e7eb');
     doc.fillColor('#111827').font('Helvetica-Bold').fontSize(16).text(value, x + 10, scoreTop + 13, { width: 92 });
     doc.fillColor('#64748b').font('Helvetica').fontSize(8).text(label.toUpperCase(), x + 10, scoreTop + 37, { width: 92 });
   });
 
   doc.y = scoreTop + 84;
-  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(14).text('Bot Summary');
-  doc.moveDown(0.4);
+  sectionTitle(doc, 'Bot Summary', 120);
   doc.font('Helvetica').fontSize(10).fillColor('#374151')
-    .text(report.feedback || 'No summary feedback saved for this assessment.', { lineGap: 3 });
+    .text(report.feedback || 'No summary feedback saved for this assessment.', PAGE.left, doc.y, { width: PAGE.width, lineGap: 3 });
   doc.moveDown(0.5);
-  doc.font('Helvetica').fontSize(10)
-    .text(`Strongest question: ${report.stats.strongest ? `Question ${report.stats.strongest}` : 'N/A'}`);
-  doc.text(`Needs focus: ${report.stats.needsFocus ? `Question ${report.stats.needsFocus}` : 'N/A'}`);
+  doc.font('Helvetica').fontSize(10).fillColor('#111827')
+    .text(`Strongest question: ${report.stats.strongest ? `Question ${report.stats.strongest}` : 'N/A'}`, PAGE.left, doc.y, { width: PAGE.width });
+  doc.text(`Needs focus: ${report.stats.needsFocus ? `Question ${report.stats.needsFocus}` : 'N/A'}`, PAGE.left, doc.y, { width: PAGE.width });
 
   doc.moveDown(1);
-  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(14).text('Question and Answer Breakdown');
+  sectionTitle(doc, 'Question and Answer Breakdown', 120);
   if (!report.questionRows.length) {
     doc.moveDown(0.5).font('Helvetica').fontSize(10).fillColor('#374151')
-      .text('No questions and answers were saved for this assessment.');
+      .text('No questions and answers were saved for this assessment.', PAGE.left, doc.y, { width: PAGE.width });
   }
 
   report.questionRows.forEach((row, index) => {
-    ensureRoom(doc, 150);
-    doc.moveDown(0.8);
+    const estimatedHeight = 105
+      + doc.heightOfString(valueOrNA(row.question), { width: PAGE.width, lineGap: 3 })
+      + doc.heightOfString(valueOrNA(row.answer || 'No answer saved'), { width: PAGE.width, lineGap: 3 })
+      + (row.feedback ? doc.heightOfString(row.feedback, { width: PAGE.width, lineGap: 3 }) + 18 : 0)
+      + (row.correctAnswer ? doc.heightOfString(row.correctAnswer, { width: PAGE.width, lineGap: 3 }) + 18 : 0);
+    ensureRoom(doc, Math.min(estimatedHeight, 360));
     const startY = doc.y;
-    doc.roundedRect(48, startY, doc.page.width - 96, 1, 0).fill('#e5e7eb');
+    doc.roundedRect(PAGE.left, startY, PAGE.width, 1, 0).fill('#e5e7eb');
     doc.y = startY + 12;
     doc.fillColor('#111827').font('Helvetica-Bold').fontSize(11)
-      .text(`Question ${index + 1}`, 48, doc.y, { continued: true });
-    doc.fillColor('#2563eb').text(`    ${row.score}`, { align: 'right' });
+      .text(`Question ${index + 1}`, PAGE.left, doc.y, { width: 260 });
+    doc.fillColor('#2563eb').font('Helvetica-Bold').fontSize(11)
+      .text(row.score, PAGE.left + 360, doc.y - 13, { width: 139, align: 'right' });
     doc.moveDown(0.4);
-    doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(8).text('QUESTION');
-    doc.fillColor('#111827').font('Helvetica').fontSize(10).text(valueOrNA(row.question), { lineGap: 3 });
+    label(doc, 'Question');
+    body(doc, row.question);
     doc.moveDown(0.4);
-    doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(8).text('STUDENT ANSWER');
-    doc.fillColor('#111827').font('Helvetica').fontSize(10).text(valueOrNA(row.answer || 'No answer saved'), { lineGap: 3 });
+    label(doc, 'Student Answer');
+    body(doc, row.answer || 'No answer saved');
     if (row.feedback) {
       doc.moveDown(0.4);
-      doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(8).text('BOT FEEDBACK');
-      doc.fillColor('#111827').font('Helvetica').fontSize(10).text(row.feedback, { lineGap: 3 });
+      label(doc, 'Bot Feedback');
+      body(doc, row.feedback);
     }
     if (row.correctAnswer) {
       doc.moveDown(0.4);
-      doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(8).text('EXPECTED ANSWER');
-      doc.fillColor('#111827').font('Helvetica').fontSize(10).text(row.correctAnswer, { lineGap: 3 });
+      label(doc, 'Expected Answer');
+      body(doc, row.correctAnswer);
     }
+    doc.moveDown(1);
   });
-
-  const pageCount = doc.bufferedPageRange().count;
-  for (let i = 0; i < pageCount; i += 1) {
-    doc.switchToPage(i);
-    doc.font('Helvetica').fontSize(8).fillColor('#94a3b8')
-      .text(`AhlaiTeam LMS - Page ${i + 1} of ${pageCount}`, 48, doc.page.height - 32, { align: 'center' });
-  }
 
   doc.end();
 });

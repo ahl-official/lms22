@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
-import { ClipboardList, MessageSquare } from 'lucide-react'
-import { attemptsAPI, rolePlayAPI } from '../../services/api'
+import { ClipboardList, MessageSquare, Send } from 'lucide-react'
+import toast from 'react-hot-toast'
+import { attemptsAPI, rolePlayAPI, whatsappAPI } from '../../services/api'
 import ScoreBadge from '../../components/ScoreBadge'
 
 const relativeTime = (date) => {
@@ -49,8 +50,9 @@ const assessmentPairs = (attempt) => {
   }))
 }
 
-function AttemptCard({ attempt, type }) {
+function AttemptCard({ attempt, type, onSendReport, sendingReport }) {
   const qas = attempt.qa || []
+  const isAssessment = type === 'assessment attempt'
   return (
     <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
       <div className="flex items-start justify-between gap-3 mb-3">
@@ -60,7 +62,20 @@ function AttemptCard({ attempt, type }) {
             {attempt.course_title}{attempt.date ? ` - ${relativeTime(attempt.date)}` : ''}
           </p>
         </div>
-        {attempt.score != null && <ScoreBadge score={attempt.score} size="sm" />}
+        <div className="flex items-center gap-2">
+          {isAssessment && (
+            <button
+              type="button"
+              onClick={() => onSendReport(attempt.id)}
+              disabled={sendingReport}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:border-brand-200 hover:text-brand-600 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+              title="Send assessment report to WhatsApp"
+            >
+              <Send size={13} /> {sendingReport ? 'Sending...' : 'Send Report'}
+            </button>
+          )}
+          {attempt.score != null && <ScoreBadge score={attempt.score} size="sm" />}
+        </div>
       </div>
 
       {attempt.feedback && (
@@ -99,6 +114,7 @@ function AttemptCard({ attempt, type }) {
 
 export default function TraineeHistory() {
   const [mode, setMode] = useState('roleplaying')
+  const [sendingAttemptId, setSendingAttemptId] = useState(null)
 
   const { data: roleData, isLoading: roleLoading } = useQuery({
     queryKey: ['trainee-roleplay-history'],
@@ -131,6 +147,18 @@ export default function TraineeHistory() {
     date: item.submitted_at,
     qa: assessmentPairs(item),
   })), [attemptData])
+
+  const sendReportMutation = useMutation({
+    mutationFn: (attemptId) => whatsappAPI.sendMyReport(attemptId),
+    onMutate: (attemptId) => setSendingAttemptId(attemptId),
+    onSuccess: (res) => {
+      toast.success(res.data?.message || 'Report sent to WhatsApp')
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.message || 'Could not send report')
+    },
+    onSettled: () => setSendingAttemptId(null),
+  })
 
   const loading = roleLoading || attemptLoading
   const items = mode === 'roleplaying' ? roleplays : assessments
@@ -179,6 +207,8 @@ export default function TraineeHistory() {
                 key={item.id}
                 attempt={item}
                 type={mode === 'roleplaying' ? 'roleplay attempt' : 'assessment attempt'}
+                onSendReport={(attemptId) => sendReportMutation.mutate(attemptId)}
+                sendingReport={sendingAttemptId === item.id}
               />
             ))}
           </div>

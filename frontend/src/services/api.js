@@ -205,6 +205,12 @@ export const voiceTestAPI = {
   evaluateAnswer: (data) => api.post('/voice-test/evaluate-answer', data),
   score: (data) => api.post('/voice-test/score', data),
 }
+
+export const whatsappAPI = {
+  sendMyReport: (attemptId) => api.post(`/whatsapp/send-my-report/${attemptId}`),
+  sendReport: (attemptId) => api.post(`/whatsapp/send-report/${attemptId}`),
+}
+
 export const rolePlayAPI = {
   getCourseProgress: (courseId, traineeId) => api.get(`/role-play/course/${courseId}/progress`, {
     params: traineeId ? { trainee_id: traineeId } : undefined,
