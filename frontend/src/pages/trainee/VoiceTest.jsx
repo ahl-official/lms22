@@ -143,7 +143,7 @@ export default function VoiceTest() {
     const navigate = useNavigate()
     const [searchParams] = useSearchParams()
     const lessonId = searchParams.get('lesson_id')
-    const { speak, startListening, stopListening, isListening, isSpeaking, liveTranscript, supported } = useVoiceSpeech()
+    const { speak, startListening, stopListening, getTranscript, isListening, isSpeaking, liveTranscript, supported } = useVoiceSpeech()
 
     const [phase, setPhase] = useState('loading')
     const [countdown, setCountdown] = useState(THINK_SECONDS)
@@ -175,6 +175,20 @@ export default function VoiceTest() {
     useEffect(() => { questionsRef.current = questions }, [questions])
     useEffect(() => { speakRef.current = speak }, [speak])
     useEffect(() => () => clearInterval(countdownTimerRef.current), [])
+
+    const settleCapturedAnswer = useCallback(async (candidate, reason) => {
+        await new Promise(resolve => setTimeout(resolve, 250))
+        const captured = getTranscript() || liveRef.current || candidate || ''
+        console.log('[voice-test:settled_capture]', {
+            questionIndex: currentQRef.current,
+            reason,
+            candidateLength: candidate?.length || 0,
+            liveLength: liveRef.current?.length || 0,
+            capturedLength: captured.length,
+            preview: captured.slice(0, 160),
+        })
+        return captured
+    }, [getTranscript])
 
     useEffect(() => {
         const init = async () => {
@@ -212,10 +226,14 @@ export default function VoiceTest() {
                 clearInterval(countdownTimerRef.current)
                 setPhase('listening')
                 onSilenceRef.current = silenceCallback
-                startListening(() => {
+                console.log('[voice-test:listening_opened]', {
+                    questionIndex: currentQRef.current,
+                    reason: 'countdown_complete',
+                })
+                startListening((transcript) => {
                     const cb = onSilenceRef.current
                     onSilenceRef.current = null
-                    if (cb) cb()
+                    if (cb) cb(transcript || liveRef.current)
                 })
             }
         }, 1000)
@@ -230,12 +248,17 @@ export default function VoiceTest() {
         const questionText = questionObj.question || questionObj.question_text || ''
         setPhase('speaking')
         speakRef.current(questionText, () => {
-            startCountdownRef.current(() => {
-                const captured = liveRef.current
+            startCountdownRef.current(async (transcript) => {
+                const captured = await settleCapturedAnswer(transcript, 'auto_silence')
+                console.log('[voice-test:auto_capture]', {
+                    questionIndex: qIndex,
+                    length: captured?.length || 0,
+                    preview: captured?.slice?.(0, 120) || '',
+                })
                 processAnswerRef.current(captured)
             })
         })
-    }, [])
+    }, [settleCapturedAnswer])
 
     const askQuestionRef = useRef(askQuestion)
     useEffect(() => { askQuestionRef.current = askQuestion }, [askQuestion])
@@ -250,6 +273,14 @@ export default function VoiceTest() {
         const questionText = questionObj.question || questionObj.question_text || ''
         const finalAnswer = answer || '(no response)'
 
+        console.log('[voice-test:process_answer]', {
+            questionIndex: qIndex,
+            phase,
+            answerLength: finalAnswer.length,
+            isNoResponse: finalAnswer === '(no response)',
+            preview: finalAnswer.slice(0, 160),
+        })
+
         setCurrentAnswer(finalAnswer)
         setPhase('evaluating')
 
@@ -262,7 +293,11 @@ export default function VoiceTest() {
             })
             evaluation = evalRes.data.evaluation
         } catch (err) {
-            console.warn('Evaluation failed (non-fatal):', err.message)
+            console.warn('[voice-test:evaluation_failed]', {
+                message: err.message,
+                status: err.response?.status,
+                response: err.response?.data,
+            })
         }
 
         setCurrentFeedback(evaluation)
@@ -293,7 +328,12 @@ export default function VoiceTest() {
                 })
                 setResult(res.data.result)
                 setPhase('done')
-            } catch {
+            } catch (err) {
+                console.error('[voice-test:score_failed]', {
+                    message: err.message,
+                    status: err.response?.status,
+                    response: err.response?.data,
+                })
                 toast.error('Scoring failed — please try again')
                 setPhase('listening')
             }
@@ -307,19 +347,49 @@ export default function VoiceTest() {
         setCurrentAnswer('')
         askQuestionRef.current(nextQ)
         isProcessingRef.current = false
-    }, [courseId, lessonId])
+    }, [courseId, lessonId, phase])
 
     const processAnswerRef = useRef(processAnswer)
     useEffect(() => { processAnswerRef.current = processAnswer }, [processAnswer])
 
     const beginTest = useCallback(() => askQuestionRef.current(0), [])
 
-    const handleDoneAnswering = useCallback(() => {
+    const handleAnswerCountdown = useCallback(() => {
         if (isProcessingRef.current) return
         clearInterval(countdownTimerRef.current)
-        const captured = stopListening()
+        setPhase('listening')
+        onSilenceRef.current = async (transcript) => {
+            const captured = await settleCapturedAnswer(transcript, 'manual_countdown_silence')
+            console.log('[voice-test:manual_countdown_capture]', {
+                questionIndex: currentQRef.current,
+                length: captured?.length || 0,
+                preview: captured?.slice?.(0, 120) || '',
+            })
+            processAnswerRef.current(captured)
+        }
+        console.log('[voice-test:listening_opened]', {
+            questionIndex: currentQRef.current,
+            reason: 'answer_button',
+        })
+        startListening((transcript) => {
+            const cb = onSilenceRef.current
+            onSilenceRef.current = null
+            if (cb) cb(transcript || liveRef.current)
+        })
+    }, [settleCapturedAnswer, startListening])
+
+    const handleDoneAnswering = useCallback(async () => {
+        if (isProcessingRef.current) return
+        clearInterval(countdownTimerRef.current)
+        const stoppedTranscript = stopListening()
+        const captured = await settleCapturedAnswer(stoppedTranscript, 'done_button')
+        console.log('[voice-test:done_capture]', {
+            questionIndex: currentQRef.current,
+            length: captured?.length || 0,
+            preview: captured?.slice?.(0, 120) || '',
+        })
         processAnswerRef.current(captured)
-    }, [stopListening])
+    }, [settleCapturedAnswer, stopListening])
 
     const totalQuestions = questions.length || 5
     const currentQuestionObj = questions[currentQ] || {}
@@ -429,7 +499,7 @@ export default function VoiceTest() {
                         <div className="bg-white rounded-2xl p-3 mb-3">
                             <p className="text-sm text-gray-700">{currentQuestionText}</p>
                         </div>
-                        <button onClick={handleDoneAnswering}
+                        <button onClick={handleAnswerCountdown}
                             className="w-full py-2 rounded-2xl border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-100 transition-colors">
                             Answer
                         </button>

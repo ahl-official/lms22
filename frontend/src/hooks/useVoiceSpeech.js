@@ -9,6 +9,7 @@ export default function useVoiceSpeech() {
     const recognitionRef = useRef(null)
     const silenceTimerRef = useRef(null)
     const finalTranscriptRef = useRef('')
+    const latestTranscriptRef = useRef('')
     const onSilenceRef = useRef(null)
     // Ref mirror of isListening — avoids stale closure bug in callbacks
     const isListeningRef = useRef(false)
@@ -31,30 +32,49 @@ export default function useVoiceSpeech() {
             }
             if (final) {
                 finalTranscriptRef.current += ' ' + final
-                setLiveTranscript(finalTranscriptRef.current.trim())
+                latestTranscriptRef.current = finalTranscriptRef.current.trim()
+                setLiveTranscript(latestTranscriptRef.current)
             } else {
-                setLiveTranscript((finalTranscriptRef.current + ' ' + interim).trim())
+                latestTranscriptRef.current = (finalTranscriptRef.current + ' ' + interim).trim()
+                setLiveTranscript(latestTranscriptRef.current)
             }
+            console.log('[voice:stt_result]', {
+                final: final.trim(),
+                interim: interim.trim(),
+                transcript: latestTranscriptRef.current,
+                resultIndex: event.resultIndex,
+                resultCount: event.results.length,
+            })
             clearTimeout(silenceTimerRef.current)
             silenceTimerRef.current = setTimeout(() => {
                 try { rec.stop() } catch (e) { }
                 isListeningRef.current = false
                 setIsListening(false)
+                console.log('[voice:silence_detected]', {
+                    transcript: latestTranscriptRef.current,
+                })
                 if (onSilenceRef.current) {
                     const cb = onSilenceRef.current
                     onSilenceRef.current = null
-                    cb()
+                    cb(latestTranscriptRef.current)
                 }
             }, 3000)
         }
 
         rec.onend = () => {
+            console.log('[voice:recognition_end]', {
+                transcript: latestTranscriptRef.current,
+            })
             isListeningRef.current = false
             setIsListening(false)
         }
 
         rec.onerror = (e) => {
-            if (e.error !== 'no-speech') console.error('STT error:', e.error)
+            console.error('[voice:stt_error]', {
+                error: e.error,
+                message: e.message,
+                transcript: latestTranscriptRef.current,
+            })
             isListeningRef.current = false
             setIsListening(false)
         }
@@ -122,12 +142,14 @@ export default function useVoiceSpeech() {
 
         onSilenceRef.current = onSilence || null
         finalTranscriptRef.current = ''
+        latestTranscriptRef.current = ''
         setLiveTranscript('')
         isListeningRef.current = true
         setIsListening(true)
 
         try {
             recognitionRef.current.start()
+            console.log('[voice:listening_start]')
         } catch (e) {
             if (e.name === 'InvalidStateError') {
                 // Already started — stop and retry after a short delay
@@ -139,7 +161,7 @@ export default function useVoiceSpeech() {
                     startListening(onSilence)
                 }, 300)
             } else {
-                console.error('Mic start error:', e)
+                console.error('[voice:mic_start_error]', e)
                 isListeningRef.current = false
                 setIsListening(false)
             }
@@ -152,8 +174,16 @@ export default function useVoiceSpeech() {
         try { recognitionRef.current?.stop() } catch (e) { }
         isListeningRef.current = false
         setIsListening(false)
-        return finalTranscriptRef.current.trim()
+        console.log('[voice:listening_stop]', {
+            finalTranscript: finalTranscriptRef.current.trim(),
+            latestTranscript: latestTranscriptRef.current,
+        })
+        return latestTranscriptRef.current || finalTranscriptRef.current.trim()
     }, [])
+
+    const getTranscript = useCallback(() => (
+        latestTranscriptRef.current || finalTranscriptRef.current.trim()
+    ), [])
 
     const cancelSpeech = useCallback(() => {
         window.speechSynthesis?.cancel()
@@ -164,6 +194,7 @@ export default function useVoiceSpeech() {
         speak,
         startListening,
         stopListening,
+        getTranscript,
         cancelSpeech,
         isListening,
         isSpeaking,
