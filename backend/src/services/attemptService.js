@@ -17,7 +17,10 @@ const saveWrittenAttempt = async ({ traineeId, testId, courseId, enrollmentId, q
   const { score, breakdown } = await scoreWrittenAttempt(questions, answers);
 
   // Get passing score from the test itself
-  const test = await Test.findById(testId).select('title passing_score');
+  const test = await Test.findById(testId)
+    .select('title passing_score test_type questions module_id lesson_id')
+    .populate('module_id', 'title order')
+    .populate('lesson_id', 'title');
   const passingScore = test?.passing_score || 60;
 
   const attempt = await Attempt.create({
@@ -60,7 +63,10 @@ const saveVoiceAttempt = async ({ traineeId, testId, courseId, enrollmentId, que
 
   const { score, feedback, rubric_breakdown } = await scoreVoiceAttempt(voiceTranscript, questions);
 
-  const test = await Test.findById(testId).select('title passing_score');
+  const test = await Test.findById(testId)
+    .select('title passing_score test_type questions module_id lesson_id')
+    .populate('module_id', 'title order')
+    .populate('lesson_id', 'title');
   const passingScore = test?.passing_score || 60;
 
   const attempt = await Attempt.create({
@@ -117,7 +123,7 @@ const saveVoiceAttempt = async ({ traineeId, testId, courseId, enrollmentId, que
 const sendAssessmentNotification = async ({ attempt, traineeId, courseId, test }) => {
   try {
     const [trainee, course] = await Promise.all([
-      User.findById(traineeId).select('name phone'),
+      User.findById(traineeId).select('name email phone'),
       Course.findById(courseId).select('title created_by')
         .populate('created_by', 'name phone'),
     ]);

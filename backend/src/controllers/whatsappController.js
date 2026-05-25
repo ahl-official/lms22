@@ -25,9 +25,16 @@ const sendReport = async (req, res, next) => {
     try {
         const { attemptId } = req.params;
         const attempt = await Attempt.findById(attemptId)
-            .populate('trainee_id', 'name phone')
+            .populate('trainee_id', 'name email phone')
             .populate({ path: 'course_id', select: 'title created_by', populate: { path: 'created_by', select: 'name phone' } })
-            .populate('test_id', 'title passing_score');
+            .populate({
+                path: 'test_id',
+                select: 'title passing_score test_type questions module_id lesson_id',
+                populate: [
+                    { path: 'module_id', select: 'title order' },
+                    { path: 'lesson_id', select: 'title' },
+                ],
+            });
         if (!attempt) return res.status(404).json({ success: false, message: 'Attempt not found' });
         const { results, errors } = await wahaService.notifyAssessmentComplete({
             attempt,
@@ -46,9 +53,16 @@ const sendBulkReports = async (req, res, next) => {
         const { test_id } = req.body;
         if (!test_id) return res.status(400).json({ success: false, message: 'test_id required' });
         const attempts = await Attempt.find({ test_id, status: 'scored' })
-            .populate('trainee_id', 'name phone')
+            .populate('trainee_id', 'name email phone')
             .populate({ path: 'course_id', select: 'title created_by', populate: { path: 'created_by', select: 'name phone' } })
-            .populate('test_id', 'title passing_score');
+            .populate({
+                path: 'test_id',
+                select: 'title passing_score test_type questions module_id lesson_id',
+                populate: [
+                    { path: 'module_id', select: 'title order' },
+                    { path: 'lesson_id', select: 'title' },
+                ],
+            });
         const results = [];
         for (const attempt of attempts) {
             const row = { trainee: attempt.trainee_id?.name, sent: false, error: null };

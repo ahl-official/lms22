@@ -1,4 +1,9 @@
 const axios = require('axios');
+const {
+    buildAssessmentReportData,
+    createAssessmentReportPdfBuffer,
+    reportFilename,
+} = require('./assessmentReportService');
 
 const WAHA_BASE = process.env.WAHA_URL || 'https://waha.amankhan.space';
 const WAHA_SESSION = process.env.WAHA_SESSION || 'ahlaiteam';
@@ -29,6 +34,21 @@ const sendMessage = async (phone, text) => {
         session: WAHA_SESSION,
         chatId,
         text,
+    });
+    return res.data;
+};
+
+const sendFile = async (phone, { buffer, filename, mimetype, caption = '' }) => {
+    const chatId = formatChatId(phone);
+    const res = await wahaClient.post('/api/sendFile', {
+        session: WAHA_SESSION,
+        chatId,
+        caption,
+        file: {
+            mimetype,
+            filename,
+            data: buffer.toString('base64'),
+        },
     });
     return res.data;
 };
@@ -140,12 +160,31 @@ const buildRolePlayLockTrainerReport = ({
  * @param {Object} test     - Test document { title, passing_score } (can be null for voice-test flow)
  */
 const notifyAssessmentComplete = async ({ attempt, trainee, trainer, course, test }) => {
-    const results = { trainee: null, trainer: null };
+    const results = { trainee: null, trainer: null, traineePdf: null, trainerPdf: null };
     const errors = [];
 
     const passingScore = attempt.passing_score || test?.passing_score || 60;
     const testTitle = test?.title || 'Assessment';
     const courseTitle = course?.title || 'Course';
+    let pdfReport = null;
+
+    try {
+        const report = buildAssessmentReportData({ attempt, trainee, trainer, course, test });
+        const buffer = await createAssessmentReportPdfBuffer(report);
+        pdfReport = {
+            buffer,
+            filename: reportFilename(report),
+            caption: `Assessment report PDF - ${report.traineeName} - ${report.testTitle}`,
+        };
+        console.info('[WhatsApp] Assessment PDF generated', {
+            attemptId: attempt?._id?.toString?.(),
+            filename: pdfReport.filename,
+            bytes: buffer.length,
+        });
+    } catch (err) {
+        errors.push(`Assessment PDF generation failed: ${err.message}`);
+        console.warn('[WhatsApp] Assessment PDF generation failed:', err.message);
+    }
 
     // Send to trainee
     if (trainee?.phone) {
@@ -165,6 +204,20 @@ const notifyAssessmentComplete = async ({ attempt, trainee, trainer, course, tes
         } catch (err) {
             errors.push(`Trainee WhatsApp failed: ${err.message}`);
             console.warn('WhatsApp to trainee failed:', err.message);
+        }
+
+        if (pdfReport) {
+            try {
+                results.traineePdf = await sendFile(trainee.phone, {
+                    buffer: pdfReport.buffer,
+                    filename: pdfReport.filename,
+                    mimetype: 'application/pdf',
+                    caption: pdfReport.caption,
+                });
+            } catch (err) {
+                errors.push(`Trainee PDF WhatsApp failed: ${err.message}`);
+                console.warn('[WhatsApp] PDF to trainee failed:', err.message);
+            }
         }
     }
 
@@ -186,6 +239,20 @@ const notifyAssessmentComplete = async ({ attempt, trainee, trainer, course, tes
         } catch (err) {
             errors.push(`Trainer WhatsApp failed: ${err.message}`);
             console.warn('WhatsApp to trainer failed:', err.message);
+        }
+
+        if (pdfReport) {
+            try {
+                results.trainerPdf = await sendFile(trainer.phone, {
+                    buffer: pdfReport.buffer,
+                    filename: pdfReport.filename,
+                    mimetype: 'application/pdf',
+                    caption: pdfReport.caption,
+                });
+            } catch (err) {
+                errors.push(`Trainer PDF WhatsApp failed: ${err.message}`);
+                console.warn('[WhatsApp] PDF to trainer failed:', err.message);
+            }
         }
     }
 
@@ -231,6 +298,7 @@ const notifyRolePlayLocked = async ({ progress, trainee, trainer, course, module
 
 module.exports = {
     sendMessage,
+    sendFile,
     checkSession,
     buildTraineeReport,
     buildTrainerReport,

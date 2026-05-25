@@ -167,7 +167,10 @@ router.post('/score', authenticate, async (req, res, next) => {
         if (!course) return res.status(404).json({ success: false, message: 'Course not found' });
 
         const enrollment = await Enrollment.findOne({ trainee_id: req.user._id, course_id });
-        const test = await Test.findById(test_id).select('title passing_score max_attempts lesson_id');
+        const test = await Test.findById(test_id)
+            .select('title passing_score max_attempts test_type questions module_id lesson_id')
+            .populate('module_id', 'title order')
+            .populate('lesson_id', 'title');
         await ensureRolePlayUnlocked(lesson_id || test?.lesson_id, req.user._id);
 
         const result = await scoreConversation({
@@ -214,7 +217,7 @@ router.post('/score', authenticate, async (req, res, next) => {
         }
 
         try {
-            const trainee = await User.findById(req.user._id).select('name phone');
+            const trainee = await User.findById(req.user._id).select('name email phone');
             await notifyAssessmentComplete({ attempt, trainee, trainer: course.created_by, course, test });
         } catch (notifyErr) {
             console.warn('WhatsApp notification failed (non-fatal):', notifyErr.message);
