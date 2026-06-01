@@ -2,6 +2,63 @@ const LessonProgress = require('../models/LessonProgress');
 const Lesson = require('../models/Lesson');
 const Module = require('../models/Module');
 const Enrollment = require('../models/Enrollment');
+const Attempt = require('../models/Attempt');
+
+const getModuleCompletionSnapshot = async ({ traineeId, moduleIds }) => {
+  const totalByModule = {};
+  const completedByModule = {};
+  const completedLessonIds = new Set();
+
+  if (!traineeId || !moduleIds?.length) {
+    return { totalByModule, completedByModule, completedLessonIds };
+  }
+
+  const lessons = await Lesson.find({ module_id: { $in: moduleIds }, is_published: true })
+    .select('_id module_id test_id')
+    .lean();
+  const lessonIds = lessons.map(lesson => lesson._id);
+  const testIds = lessons.map(lesson => lesson.test_id).filter(Boolean);
+
+  const [completedProgress, attempts] = await Promise.all([
+    LessonProgress.find({
+      trainee_id: traineeId,
+      lesson_id: { $in: lessonIds },
+      status: 'completed',
+    }).select('lesson_id').lean(),
+    testIds.length
+      ? Attempt.find({
+        trainee_id: traineeId,
+        test_id: { $in: testIds },
+        status: 'scored',
+      }).select('test_id score passing_score').lean()
+      : [],
+  ]);
+
+  const completedProgressLessonIds = new Set(
+    completedProgress.map(item => item.lesson_id.toString())
+  );
+  const passedTestIds = new Set(
+    attempts
+      .filter(attempt => Number(attempt.score) >= (attempt.passing_score || 60))
+      .map(attempt => attempt.test_id.toString())
+  );
+
+  for (const lesson of lessons) {
+    const moduleKey = lesson.module_id.toString();
+    totalByModule[moduleKey] = (totalByModule[moduleKey] || 0) + 1;
+
+    const lessonCompleted =
+      completedProgressLessonIds.has(lesson._id.toString()) ||
+      (lesson.test_id && passedTestIds.has(lesson.test_id.toString()));
+
+    if (lessonCompleted) {
+      completedByModule[moduleKey] = (completedByModule[moduleKey] || 0) + 1;
+      completedLessonIds.add(lesson._id.toString());
+    }
+  }
+
+  return { totalByModule, completedByModule, completedLessonIds };
+};
 
 const recalculateEnrollmentProgress = async ({ traineeId, courseId }) => {
   if (!traineeId || !courseId) return null;
@@ -10,28 +67,7 @@ const recalculateEnrollmentProgress = async ({ traineeId, courseId }) => {
   const moduleIds = modules.map(mod => mod._id);
   if (!moduleIds.length) return null;
 
-  const [lessonCounts, completedCounts] = await Promise.all([
-    Lesson.aggregate([
-      { $match: { module_id: { $in: moduleIds }, is_published: true } },
-      { $group: { _id: '$module_id', count: { $sum: 1 } } },
-    ]),
-    LessonProgress.aggregate([
-      {
-        $match: {
-          trainee_id: traineeId,
-          module_id: { $in: moduleIds },
-          status: 'completed',
-        },
-      },
-      { $group: { _id: '$module_id', count: { $sum: 1 } } },
-    ]),
-  ]);
-
-  const totalByModule = {};
-  for (const row of lessonCounts) totalByModule[row._id.toString()] = row.count;
-
-  const completedByModule = {};
-  for (const row of completedCounts) completedByModule[row._id.toString()] = row.count;
+  const { totalByModule, completedByModule } = await getModuleCompletionSnapshot({ traineeId, moduleIds });
 
   const completedModules = modules.filter((mod) => {
     const key = mod._id.toString();
@@ -47,8 +83,12 @@ const recalculateEnrollmentProgress = async ({ traineeId, courseId }) => {
   if (progress === 100) {
     enrollment.status = 'completed';
     enrollment.completed_at = enrollment.completed_at || new Date();
-  } else if (progress > 0 || enrollment.status === 'not_started') {
-    enrollment.status = progress > 0 ? 'in_progress' : enrollment.status;
+  } else if (progress > 0) {
+    enrollment.status = 'in_progress';
+    enrollment.completed_at = null;
+  } else {
+    enrollment.status = 'not_started';
+    enrollment.completed_at = null;
   }
   await enrollment.save();
 
@@ -106,6 +146,7 @@ const markAssessmentAttemptProgress = async ({ attempt, test, traineeId, courseI
 };
 
 module.exports = {
+  getModuleCompletionSnapshot,
   markAssessmentAttemptProgress,
   recalculateEnrollmentProgress,
 };

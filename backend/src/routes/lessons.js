@@ -73,11 +73,11 @@ const attachProgress = async (lessons, traineeId) => {
         const maxAttempts = l.test_id?.max_attempts || 3;
         return {
             ...l,
-            is_completed: prog?.status === 'completed',
-            progress_status: prog?.status || 'not_started',
-            lesson_score: prog?.score ?? null,
+            is_completed: prog?.status === 'completed' || !!attemptsForTest?.passed,
+            progress_status: prog?.status || (attemptsForTest?.passed ? 'completed' : 'not_started'),
+            lesson_score: prog?.score ?? attemptsForTest?.best_score ?? null,
             watch_percent: prog?.watch_percent ?? 0,
-            completed_at: prog?.completed_at ?? null,
+            completed_at: prog?.completed_at ?? (attemptsForTest?.passed ? attemptsForTest.latest.submitted_at : null),
             assessment_attempt: attemptsForTest ? {
                 latest_attempt_id: attemptsForTest.latest._id,
                 latest_score: attemptsForTest.latest.score,

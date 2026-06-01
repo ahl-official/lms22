@@ -1,9 +1,10 @@
 const Enrollment = require('../models/Enrollment');
 const Course = require('../models/Course');
 const Module = require('../models/Module');
-const Lesson = require('../models/Lesson');
-const LessonProgress = require('../models/LessonProgress');
-const { recalculateEnrollmentProgress } = require('../services/courseProgressService');
+const {
+  getModuleCompletionSnapshot,
+  recalculateEnrollmentProgress,
+} = require('../services/courseProgressService');
 
 /**
  * @desc    Enroll a single trainee
@@ -77,28 +78,10 @@ exports.getMyEnrollments = async (req, res, next) => {
       .lean();
     const moduleIds = modules.map(module => module._id);
 
-    const [lessonCounts, completedCounts] = await Promise.all([
-      Lesson.aggregate([
-        { $match: { module_id: { $in: moduleIds }, is_published: true } },
-        { $group: { _id: '$module_id', count: { $sum: 1 } } },
-      ]),
-      LessonProgress.aggregate([
-        {
-          $match: {
-            trainee_id: req.user._id,
-            module_id: { $in: moduleIds },
-            status: 'completed',
-          },
-        },
-        { $group: { _id: '$module_id', count: { $sum: 1 } } },
-      ]),
-    ]);
-
-    const totalByModule = {};
-    for (const row of lessonCounts) totalByModule[row._id.toString()] = row.count;
-
-    const completedByModule = {};
-    for (const row of completedCounts) completedByModule[row._id.toString()] = row.count;
+    const { totalByModule, completedByModule } = await getModuleCompletionSnapshot({
+      traineeId: req.user._id,
+      moduleIds,
+    });
 
     const modulesByCourse = {};
     for (const module of modules) {

@@ -1,11 +1,11 @@
 const router = require('express').Router();
 const Module = require('../models/Module');
 const Lesson = require('../models/Lesson');
-const LessonProgress = require('../models/LessonProgress');
 const Test = require('../models/Test');
 const { authenticate, authorize } = require('../middleware/auth');
 const { detectVideoSource, fetchTranscript } = require('../services/transcriptService');
 const { generateTest } = require('../services/aiService');
+const { getModuleCompletionSnapshot } = require('../services/courseProgressService');
 
 // ── GET /api/modules/course/:courseId ─────────────────────────────────────
 router.get('/course/:courseId', authenticate, async (req, res, next) => {
@@ -55,24 +55,10 @@ router.get('/course/:courseId', authenticate, async (req, res, next) => {
         // ── Trainee — lock/complete via LessonProgress ────────────────────────
         const moduleIds = modules.map(m => m._id);
 
-        // Total published lessons per module
-        const lessonDocs = await Lesson.find(
-            { module_id: { $in: moduleIds }, is_published: true },
-            'module_id'
-        ).lean();
-        const totalByMod = {};
-        for (const l of lessonDocs) {
-            const k = l.module_id.toString();
-            totalByMod[k] = (totalByMod[k] || 0) + 1;
-        }
-
-        // Completed lessons per module for this trainee
-        const agg = await LessonProgress.aggregate([
-            { $match: { trainee_id: req.user._id, module_id: { $in: moduleIds }, status: 'completed' } },
-            { $group: { _id: '$module_id', count: { $sum: 1 } } },
-        ]);
-        const doneByMod = {};
-        for (const row of agg) doneByMod[row._id.toString()] = row.count;
+        const { totalByModule: totalByMod, completedByModule: doneByMod } = await getModuleCompletionSnapshot({
+            traineeId: req.user._id,
+            moduleIds,
+        });
 
         // Build completed set
         const completedSet = new Set();
