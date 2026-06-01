@@ -70,6 +70,19 @@ function ModuleProgressRow({ module, idx, courseId, navigate }) {
 function CourseCard({ enr, navigate }) {
   const [expanded, setExpanded] = useState(false)
   const courseId = enr.course_id?._id || enr.course_id
+  const hasModuleProgress = Number(enr.module_count) > 0
+  const completedModules = Number(enr.completed_modules) || 0
+  const moduleCount = Number(enr.module_count) || 0
+  const displayProgress = hasModuleProgress
+    ? Math.round((completedModules / moduleCount) * 100)
+    : (Number(enr.progress) || 0)
+  const displayStatus = hasModuleProgress
+    ? displayProgress === 100
+      ? 'completed'
+      : displayProgress > 0
+        ? 'in_progress'
+        : 'not_started'
+    : enr.status
 
   const { data: modulesData, isLoading } = useQuery({
     queryKey: ['trainee-modules', courseId],
@@ -83,12 +96,12 @@ function CourseCard({ enr, navigate }) {
     <div className="card transition-all">
       {/* Course row */}
       <div className="flex items-center gap-4">
-        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 ${enr.status === 'completed' ? 'bg-green-100' :
-            enr.status === 'in_progress' ? 'bg-brand-100' : 'bg-gray-100'
+        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 ${displayStatus === 'completed' ? 'bg-green-100' :
+            displayStatus === 'in_progress' ? 'bg-brand-100' : 'bg-gray-100'
           }`}>
-          {enr.status === 'completed'
+          {displayStatus === 'completed'
             ? <CheckCircle size={22} className="text-green-500" />
-            : <PlayCircle size={22} className={enr.status === 'in_progress' ? 'text-brand-500' : 'text-gray-400'} />
+            : <PlayCircle size={22} className={displayStatus === 'in_progress' ? 'text-brand-500' : 'text-gray-400'} />
           }
         </div>
 
@@ -105,11 +118,13 @@ function CourseCard({ enr, navigate }) {
             <div className="flex items-center gap-2 flex-1 max-w-xs">
               <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                 <div
-                  className={`h-full rounded-full ${enr.status === 'completed' ? 'bg-green-400' : 'bg-brand-400'}`}
-                  style={{ width: `${enr.progress || 0}%` }}
+                  className={`h-full rounded-full ${displayStatus === 'completed' ? 'bg-green-400' : 'bg-brand-400'}`}
+                  style={{ width: `${displayProgress}%` }}
                 />
               </div>
-              <span className="text-xs text-gray-500 flex-shrink-0">{enr.progress || 0}%</span>
+              <span className="text-xs text-gray-500 flex-shrink-0">
+                {hasModuleProgress ? `${completedModules}/${moduleCount} modules` : `${displayProgress}%`}
+              </span>
             </div>
             {enr.duration_hours && (
               <span className="flex items-center gap-1 text-xs text-gray-400">
@@ -121,9 +136,9 @@ function CourseCard({ enr, navigate }) {
 
         <div className="flex items-center gap-2 flex-shrink-0">
           {enr.best_score != null && <ScoreBadge score={enr.best_score} size="sm" />}
-          <span className={`badge text-xs hidden sm:inline-flex ${enr.status === 'completed' ? 'badge-green' :
-              enr.status === 'in_progress' ? 'badge-blue' : 'badge-gray'
-            }`}>{enr.status?.replace('_', ' ')}</span>
+          <span className={`badge text-xs hidden sm:inline-flex ${displayStatus === 'completed' ? 'badge-green' :
+              displayStatus === 'in_progress' ? 'badge-blue' : 'badge-gray'
+            }`}>{displayStatus?.replace('_', ' ')}</span>
 
           {/* Open course */}
           <button

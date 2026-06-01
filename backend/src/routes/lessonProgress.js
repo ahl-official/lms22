@@ -7,6 +7,7 @@ const Lesson = require('../models/Lesson');
 const Module = require('../models/Module');
 const Enrollment = require('../models/Enrollment');
 const { authenticate, authorize } = require('../middleware/auth');
+const { recalculateEnrollmentProgress } = require('../services/courseProgressService');
 
 // ── POST /api/lesson-progress/complete ────────────────────────────────────────
 router.post('/complete', authenticate, authorize('trainee'), async (req, res, next) => {
@@ -42,38 +43,7 @@ router.post('/complete', authenticate, authorize('trainee'), async (req, res, ne
 
     const module_completed = totalLessons > 0 && completedLessons >= totalLessons;
 
-    // Recalculate overall enrollment progress
-    if (module_completed) {
-      const modules = await Module.find({ course_id, is_published: true }).sort({ order: 1 });
-      let completedModuleCount = 0;
-
-      for (const mod of modules) {
-        const [tot, comp] = await Promise.all([
-          Lesson.countDocuments({ module_id: mod._id, is_published: true }),
-          LessonProgress.countDocuments({
-            trainee_id: req.user._id,
-            module_id: mod._id,
-            status: 'completed',
-          }),
-        ]);
-        if (tot > 0 && comp >= tot) completedModuleCount++;
-      }
-
-      const progressPct =
-        modules.length > 0 ? Math.round((completedModuleCount / modules.length) * 100) : 0;
-
-      const enrollment = await Enrollment.findOne({ trainee_id: req.user._id, course_id });
-      if (enrollment) {
-        enrollment.progress = progressPct;
-        if (progressPct === 100) {
-          enrollment.status = 'completed';
-          enrollment.completed_at = enrollment.completed_at || new Date();
-        } else if (progressPct > 0) {
-          enrollment.status = 'in_progress';
-        }
-        await enrollment.save();
-      }
-    }
+    const courseProgress = await recalculateEnrollmentProgress({ traineeId: req.user._id, courseId: course_id });
 
     res.json({
       success: true,
@@ -81,6 +51,7 @@ router.post('/complete', authenticate, authorize('trainee'), async (req, res, ne
       module_completed,
       total_lessons: totalLessons,
       completed_lessons: completedLessons,
+      course_progress: courseProgress,
     });
   } catch (err) {
     next(err);

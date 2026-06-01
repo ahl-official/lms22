@@ -12,14 +12,31 @@ router.get('/course/:courseId', authenticate, async (req, res, next) => {
     if (req.user.role !== 'trainee') return res.json({ success: true, tests });
 
     const testIds = tests.map(t => t._id);
-    const passedAttempts = await Attempt.find({
+    const attempts = await Attempt.find({
       trainee_id: req.user._id,
       test_id: { $in: testIds },
       status: 'scored',
-    }).select('test_id score');
+    }).select('test_id score passing_score submitted_at').sort({ submitted_at: -1 }).lean();
+
+    const attemptMap = {};
+    for (const attempt of attempts) {
+      const key = attempt.test_id.toString();
+      if (!attemptMap[key]) {
+        attemptMap[key] = {
+          latest: attempt,
+          best_score: attempt.score,
+          attempts_used: 0,
+          passed: false,
+        };
+      }
+      const row = attemptMap[key];
+      row.attempts_used += 1;
+      if (attempt.score > row.best_score) row.best_score = attempt.score;
+      if (attempt.score >= (attempt.passing_score || 60)) row.passed = true;
+    }
 
     const passedTestIds = new Set(
-      passedAttempts
+      attempts
         .filter(a => {
           const test = tests.find(t => t._id.equals(a.test_id));
           return test && a.score >= (test.passing_score || 60);
@@ -31,6 +48,17 @@ router.get('/course/:courseId', authenticate, async (req, res, next) => {
       const obj = t.toObject();
       obj.questions = obj.questions.map(({ correct_answer, ...q }) => q);
       obj.is_locked = idx > 0 && !passedTestIds.has(tests[idx - 1]._id.toString());
+      const attemptInfo = attemptMap[t._id.toString()];
+      obj.assessment_attempt = attemptInfo ? {
+        latest_attempt_id: attemptInfo.latest._id,
+        latest_score: attemptInfo.latest.score,
+        latest_submitted_at: attemptInfo.latest.submitted_at,
+        best_score: attemptInfo.best_score,
+        passed: attemptInfo.passed,
+        attempts_used: attemptInfo.attempts_used,
+        attempts_remaining: Math.max(0, (t.max_attempts || 3) - attemptInfo.attempts_used),
+        max_attempts: t.max_attempts || 3,
+      } : null;
       return obj;
     });
 
@@ -49,14 +77,31 @@ router.get('/module/:moduleId', authenticate, async (req, res, next) => {
     if (req.user.role !== 'trainee') return res.json({ success: true, tests });
 
     const testIds = tests.map(t => t._id);
-    const passedAttempts = await Attempt.find({
+    const attempts = await Attempt.find({
       trainee_id: req.user._id,
       test_id: { $in: testIds },
       status: 'scored',
-    }).select('test_id score');
+    }).select('test_id score passing_score submitted_at').sort({ submitted_at: -1 }).lean();
+
+    const attemptMap = {};
+    for (const attempt of attempts) {
+      const key = attempt.test_id.toString();
+      if (!attemptMap[key]) {
+        attemptMap[key] = {
+          latest: attempt,
+          best_score: attempt.score,
+          attempts_used: 0,
+          passed: false,
+        };
+      }
+      const row = attemptMap[key];
+      row.attempts_used += 1;
+      if (attempt.score > row.best_score) row.best_score = attempt.score;
+      if (attempt.score >= (attempt.passing_score || 60)) row.passed = true;
+    }
 
     const passedTestIds = new Set(
-      passedAttempts
+      attempts
         .filter(a => {
           const test = tests.find(t => t._id.equals(a.test_id));
           return test && a.score >= (test.passing_score || 60);
@@ -68,6 +113,17 @@ router.get('/module/:moduleId', authenticate, async (req, res, next) => {
       const obj = t.toObject();
       obj.questions = obj.questions.map(({ correct_answer, ...q }) => q);
       obj.is_locked = idx > 0 && !passedTestIds.has(tests[idx - 1]._id.toString());
+      const attemptInfo = attemptMap[t._id.toString()];
+      obj.assessment_attempt = attemptInfo ? {
+        latest_attempt_id: attemptInfo.latest._id,
+        latest_score: attemptInfo.latest.score,
+        latest_submitted_at: attemptInfo.latest.submitted_at,
+        best_score: attemptInfo.best_score,
+        passed: attemptInfo.passed,
+        attempts_used: attemptInfo.attempts_used,
+        attempts_remaining: Math.max(0, (t.max_attempts || 3) - attemptInfo.attempts_used),
+        max_attempts: t.max_attempts || 3,
+      } : null;
       return obj;
     });
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { voiceTestAPI } from '../../services/api'
 import useVoiceSpeech from '../../hooks/useVoiceSpeech'
 import {
@@ -141,6 +142,7 @@ function ResultScreen({ result, courseTitle, conversation, onDone }) {
 export default function VoiceTest() {
     const { courseId } = useParams()
     const navigate = useNavigate()
+    const qc = useQueryClient()
     const [searchParams] = useSearchParams()
     const lessonId = searchParams.get('lesson_id')
     const { speak, startListening, stopListening, getTranscript, isListening, isSpeaking, liveTranscript, supported } = useVoiceSpeech()
@@ -327,6 +329,9 @@ export default function VoiceTest() {
                     lesson_id: lessonId,
                 })
                 setResult(res.data.result)
+                qc.invalidateQueries({ queryKey: ['course-lessons', courseId] })
+                qc.invalidateQueries({ queryKey: ['modules', courseId] })
+                qc.invalidateQueries({ queryKey: ['my-enrollments'] })
                 setPhase('done')
             } catch (err) {
                 console.error('[voice-test:score_failed]', {
@@ -347,7 +352,7 @@ export default function VoiceTest() {
         setCurrentAnswer('')
         askQuestionRef.current(nextQ)
         isProcessingRef.current = false
-    }, [courseId, lessonId, phase])
+    }, [courseId, lessonId, phase, qc])
 
     const processAnswerRef = useRef(processAnswer)
     useEffect(() => { processAnswerRef.current = processAnswer }, [processAnswer])

@@ -3,6 +3,7 @@
 // Now uses keyword-overlap scoring matching the backend logic.
 
 import { useState, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { ClipboardList, Mic, Lock, CheckCircle, XCircle, Award } from 'lucide-react'
 import TestTaker from '../TestTaker'
@@ -196,11 +197,13 @@ function InlineQuiz({ lesson, onPass }) {
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function LessonTestPanel({ lesson, onComplete, locked = false, rolePlayProgress, rolePlayLoading = false }) {
     const navigate = useNavigate()
+    const qc = useQueryClient()
     const [submitting, setSubmitting] = useState(false)
 
     const linkedTest = lesson.test_id
     const hasLinkedTest = !!linkedTest && linkedTest.is_active !== false
     const hasInlineQuiz = (lesson.quiz_questions?.length || 0) > 0
+    const priorAttempt = lesson.assessment_attempt
 
     if (!hasLinkedTest && !hasInlineQuiz) {
         return (
@@ -252,6 +255,9 @@ export default function LessonTestPanel({ lesson, onComplete, locked = false, ro
                 answers,
             })
             toast.success('Test submitted!')
+            qc.invalidateQueries({ queryKey: ['course-lessons', lesson.course_id] })
+            qc.invalidateQueries({ queryKey: ['modules', lesson.course_id] })
+            qc.invalidateQueries({ queryKey: ['my-enrollments'] })
             navigate(`/trainee/results/${res.data.attempt._id}`)
         } catch (err) {
             toast.error(err.response?.data?.message || 'Failed to submit')
@@ -260,9 +266,32 @@ export default function LessonTestPanel({ lesson, onComplete, locked = false, ro
         }
     }
 
+    const AssessmentStatus = () => priorAttempt ? (
+        <div className={`mb-5 rounded-2xl border p-4 ${priorAttempt.passed ? 'border-green-200 bg-green-50' : 'border-amber-200 bg-amber-50'}`}>
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <p className={`text-sm font-semibold ${priorAttempt.passed ? 'text-green-800' : 'text-amber-800'}`}>
+                        Previous assessment score: {Math.round(priorAttempt.latest_score)}%
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                        Best score: {Math.round(priorAttempt.best_score)}% · Attempts: {priorAttempt.attempts_used}/{priorAttempt.max_attempts}
+                    </p>
+                </div>
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${priorAttempt.passed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {priorAttempt.passed ? <CheckCircle size={12} /> : <XCircle size={12} />}
+                    {priorAttempt.passed ? 'Completed' : 'Needs work'}
+                </span>
+            </div>
+            {priorAttempt.attempts_remaining > 0 && (
+                <p className="text-xs text-gray-500 mt-2">You can retake this assessment if you want to improve the score.</p>
+            )}
+        </div>
+    ) : null
+
     if (hasLinkedTest && linkedTest.test_type === 'voice') {
         return (
             <div className="card text-center py-12">
+                <AssessmentStatus />
                 <div className="w-16 h-16 rounded-2xl bg-coral-50 flex items-center justify-center mx-auto mb-4">
                     <Mic size={26} className="text-coral-500" />
                 </div>
@@ -272,16 +301,32 @@ export default function LessonTestPanel({ lesson, onComplete, locked = false, ro
                 </p>
                 <button
                     onClick={() => navigate(`/voice-test/${lesson.course_id}?lesson_id=${lesson._id}`)}
+                    disabled={priorAttempt?.attempts_remaining === 0}
                     className="btn-primary flex items-center gap-2 mx-auto"
                 >
-                    <Mic size={15} /> Start Voice Test
+                    <Mic size={15} /> {priorAttempt ? 'Retake Voice Test' : 'Start Voice Test'}
                 </button>
+                {priorAttempt?.attempts_remaining === 0 && (
+                    <p className="text-xs text-red-500 mt-3">Maximum attempts reached.</p>
+                )}
             </div>
         )
     }
 
     if (hasLinkedTest) {
-        return <TestTaker test={linkedTest} onSubmit={handleWrittenSubmit} />
+        return (
+            <div>
+                <AssessmentStatus />
+                {priorAttempt?.attempts_remaining === 0 ? (
+                    <div className="text-center py-8 text-gray-400">
+                        <Lock size={30} className="mx-auto mb-2 opacity-40" />
+                        <p className="text-sm">Maximum attempts reached.</p>
+                    </div>
+                ) : (
+                    <TestTaker test={linkedTest} onSubmit={handleWrittenSubmit} />
+                )}
+            </div>
+        )
     }
 
     return <InlineQuiz lesson={lesson} onPass={(score) => onComplete(score)} />

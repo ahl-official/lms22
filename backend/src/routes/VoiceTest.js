@@ -15,6 +15,7 @@ const {
     normalizeBrandTerms,
 } = require('../services/aiService');
 const { notifyAssessmentComplete } = require('../services/wahaService');
+const { markAssessmentAttemptProgress } = require('../services/courseProgressService');
 
 const ensureRolePlayUnlocked = async (lessonId, traineeId) => {
     if (!lessonId) return;
@@ -203,16 +204,15 @@ router.post('/score', authenticate, async (req, res, next) => {
             submitted_at: new Date(),
         });
 
-        if (enrollment) {
-            if (enrollment.best_score === null || result.score > enrollment.best_score)
-                enrollment.best_score = result.score;
-            if (result.score >= passingScore) {
-                enrollment.status = 'completed';
-                enrollment.progress = 100;
-                enrollment.completed_at = new Date();
-            } else {
-                enrollment.status = 'in_progress';
-            }
+        await markAssessmentAttemptProgress({
+            attempt,
+            test,
+            traineeId: req.user._id,
+            courseId: course_id,
+        });
+
+        if (enrollment && (enrollment.best_score === null || result.score > enrollment.best_score)) {
+            enrollment.best_score = result.score;
             await enrollment.save();
         }
 

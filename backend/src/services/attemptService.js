@@ -8,6 +8,7 @@ const { upsertVoiceAttempt } = require('../config/pinecone');
 const { scoreWrittenAttempt, scoreVoiceAttempt, generateEmbedding } = require('./aiService');
 const { transcribeAudioBuffer } = require('./transcriptService');
 const { notifyAssessmentComplete } = require('./wahaService');
+const { markAssessmentAttemptProgress } = require('./courseProgressService');
 const { v4: uuidv4 } = require('uuid');
 
 /**
@@ -38,7 +39,7 @@ const saveWrittenAttempt = async ({ traineeId, testId, courseId, enrollmentId, q
     submitted_at: new Date(),
   });
 
-  await updateEnrollment(enrollmentId, score, passingScore);
+  await updateEnrollment({ attempt, test, traineeId, courseId, fallbackEnrollmentId: enrollmentId });
 
   // Best-effort WhatsApp notification — never blocks the response
   sendAssessmentNotification({ attempt, traineeId, courseId, test }).catch(() => { });
@@ -85,7 +86,7 @@ const saveVoiceAttempt = async ({ traineeId, testId, courseId, enrollmentId, que
     submitted_at: new Date(),
   });
 
-  await updateEnrollment(enrollmentId, score, passingScore);
+  await updateEnrollment({ attempt, test, traineeId, courseId, fallbackEnrollmentId: enrollmentId });
 
   // Pinecone — best-effort
   try {
@@ -136,20 +137,16 @@ const sendAssessmentNotification = async ({ attempt, traineeId, courseId, test }
   }
 };
 
-const updateEnrollment = async (enrollmentId, score, passingScore = 60) => {
-  if (!enrollmentId) return;
-  const enr = await Enrollment.findById(enrollmentId);
+const updateEnrollment = async ({ attempt, test, traineeId, courseId, fallbackEnrollmentId }) => {
+  await markAssessmentAttemptProgress({ attempt, test, traineeId, courseId });
+
+  if (!fallbackEnrollmentId) return;
+  const enr = await Enrollment.findById(fallbackEnrollmentId);
   if (!enr) return;
-  if (enr.best_score === null || score > enr.best_score) enr.best_score = score;
-  // Only mark completed if they actually passed
-  if (score >= passingScore) {
-    enr.status = 'completed';
-    enr.progress = 100;
-    enr.completed_at = new Date();
-  } else {
-    enr.status = 'in_progress';
+  if (enr.best_score === null || attempt.score > enr.best_score) {
+    enr.best_score = attempt.score;
+    await enr.save();
   }
-  await enr.save();
 };
 
 module.exports = { saveWrittenAttempt, saveVoiceAttempt };

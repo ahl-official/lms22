@@ -1,5 +1,9 @@
 const Enrollment = require('../models/Enrollment');
 const Course = require('../models/Course');
+const Module = require('../models/Module');
+const Lesson = require('../models/Lesson');
+const LessonProgress = require('../models/LessonProgress');
+const { recalculateEnrollmentProgress } = require('../services/courseProgressService');
 
 /**
  * @desc    Enroll a single trainee
@@ -66,14 +70,85 @@ exports.getMyEnrollments = async (req, res, next) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    const result = enrollments
-      .filter(e => !!e.course_id)
-      .map(e => ({
+    const visibleEnrollments = enrollments.filter(e => !!e.course_id);
+    const courseIds = visibleEnrollments.map(e => e.course_id._id);
+    const modules = await Module.find({ course_id: { $in: courseIds }, is_published: true })
+      .select('_id course_id')
+      .lean();
+    const moduleIds = modules.map(module => module._id);
+
+    const [lessonCounts, completedCounts] = await Promise.all([
+      Lesson.aggregate([
+        { $match: { module_id: { $in: moduleIds }, is_published: true } },
+        { $group: { _id: '$module_id', count: { $sum: 1 } } },
+      ]),
+      LessonProgress.aggregate([
+        {
+          $match: {
+            trainee_id: req.user._id,
+            module_id: { $in: moduleIds },
+            status: 'completed',
+          },
+        },
+        { $group: { _id: '$module_id', count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const totalByModule = {};
+    for (const row of lessonCounts) totalByModule[row._id.toString()] = row.count;
+
+    const completedByModule = {};
+    for (const row of completedCounts) completedByModule[row._id.toString()] = row.count;
+
+    const modulesByCourse = {};
+    for (const module of modules) {
+      const key = module.course_id.toString();
+      if (!modulesByCourse[key]) modulesByCourse[key] = [];
+      modulesByCourse[key].push(module);
+    }
+
+    const result = [];
+    const staleUpdates = [];
+
+    for (const e of visibleEnrollments) {
+        const courseModules = modulesByCourse[e.course_id._id.toString()] || [];
+        const completedModules = courseModules.filter((module) => {
+          const key = module._id.toString();
+          const total = totalByModule[key] || 0;
+          return total > 0 && (completedByModule[key] || 0) >= total;
+        }).length;
+        const moduleProgress = courseModules.length
+          ? Math.round((completedModules / courseModules.length) * 100)
+          : e.progress;
+        const derivedStatus = courseModules.length
+          ? moduleProgress === 100
+            ? 'completed'
+            : moduleProgress > 0
+              ? 'in_progress'
+              : 'not_started'
+          : e.status;
+
+        if (courseModules.length && (e.progress !== moduleProgress || e.status !== derivedStatus)) {
+          staleUpdates.push(recalculateEnrollmentProgress({ traineeId: req.user._id, courseId: e.course_id._id }));
+        }
+
+        result.push({
         ...e,
         course_title: e.course_id.title,
         requires_voice_test: e.course_id.requires_voice_test,
         duration_hours: e.course_id.duration_hours,
-      }));
+          module_count: courseModules.length,
+          completed_modules: completedModules,
+          progress: moduleProgress,
+          status: derivedStatus,
+        });
+      }
+
+    if (staleUpdates.length) {
+      Promise.all(staleUpdates).catch(err => {
+        console.warn('[progress] Enrollment sync failed:', err.message);
+      });
+    }
 
     res.json({ success: true, enrollments: result });
   } catch (err) {

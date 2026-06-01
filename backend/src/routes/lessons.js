@@ -6,6 +6,7 @@ const axios = require('axios');
 const Lesson = require('../models/Lesson');
 const LessonProgress = require('../models/LessonProgress');
 const Test = require('../models/Test');
+const Attempt = require('../models/Attempt');
 const Module = require('../models/Module');
 const Enrollment = require('../models/Enrollment');
 const { authenticate, authorize } = require('../middleware/auth');
@@ -26,17 +27,50 @@ const stripAnswers = (lesson) => {
 const attachProgress = async (lessons, traineeId) => {
     if (!traineeId) return lessons;
     const lessonIds = lessons.map((l) => l._id || l.lesson_id);
-    const progItems = await LessonProgress.find({
-        trainee_id: traineeId,
-        lesson_id: { $in: lessonIds },
-    }).select('lesson_id status score completed_at watch_percent');
+    const testIds = lessons
+        .map(l => l.test_id?._id || l.test_id)
+        .filter(Boolean);
+
+    const [progItems, attempts] = await Promise.all([
+        LessonProgress.find({
+            trainee_id: traineeId,
+            lesson_id: { $in: lessonIds },
+        }).select('lesson_id status score completed_at watch_percent'),
+        testIds.length
+            ? Attempt.find({
+                trainee_id: traineeId,
+                test_id: { $in: testIds },
+                status: 'scored',
+            }).select('test_id score passing_score submitted_at').sort({ submitted_at: -1 }).lean()
+            : [],
+    ]);
 
     const progMap = {};
     for (const p of progItems) progMap[p.lesson_id.toString()] = p;
 
+    const attemptMap = {};
+    for (const attempt of attempts) {
+        const key = attempt.test_id.toString();
+        if (!attemptMap[key]) {
+            attemptMap[key] = {
+                latest: attempt,
+                best_score: attempt.score,
+                attempts_used: 0,
+                passed: false,
+            };
+        }
+        const row = attemptMap[key];
+        row.attempts_used += 1;
+        if (attempt.score > row.best_score) row.best_score = attempt.score;
+        if (attempt.score >= (attempt.passing_score || 60)) row.passed = true;
+    }
+
     return lessons.map((l) => {
         const id = (l._id || l.lesson_id).toString();
         const prog = progMap[id];
+        const testId = l.test_id?._id || l.test_id;
+        const attemptsForTest = testId ? attemptMap[testId.toString()] : null;
+        const maxAttempts = l.test_id?.max_attempts || 3;
         return {
             ...l,
             is_completed: prog?.status === 'completed',
@@ -44,6 +78,16 @@ const attachProgress = async (lessons, traineeId) => {
             lesson_score: prog?.score ?? null,
             watch_percent: prog?.watch_percent ?? 0,
             completed_at: prog?.completed_at ?? null,
+            assessment_attempt: attemptsForTest ? {
+                latest_attempt_id: attemptsForTest.latest._id,
+                latest_score: attemptsForTest.latest.score,
+                latest_submitted_at: attemptsForTest.latest.submitted_at,
+                best_score: attemptsForTest.best_score,
+                passed: attemptsForTest.passed,
+                attempts_used: attemptsForTest.attempts_used,
+                attempts_remaining: Math.max(0, maxAttempts - attemptsForTest.attempts_used),
+                max_attempts: maxAttempts,
+            } : null,
         };
     });
 };
@@ -111,7 +155,7 @@ router.get('/course/:courseId', authenticate, async (req, res, next) => {
             .sort({ order: 1, createdAt: 1 })
             .populate({
                 path: 'test_id',
-                select: 'title test_type passing_score is_active',
+                select: 'title test_type passing_score is_active max_attempts',
             })
             .lean();
 

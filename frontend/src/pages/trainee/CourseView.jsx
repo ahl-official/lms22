@@ -361,7 +361,8 @@ export default function CourseView() {
   const handleWrittenSubmit = async (answers) => {
     if (!test) return
     const res = await attemptsAPI.submitWritten({ test_id: test._id, course_id: id, answers })
-    if (enrollData) progressMutation.mutate({ enrollmentId: enrollData._id, progress: 100 })
+    qc.invalidateQueries({ queryKey: ['my-enrollments'] })
+    qc.invalidateQueries({ queryKey: ['tests', id] })
     toast.success('Test submitted!')
     navigate(`/trainee/results/${res.data.attempt._id}`)
   }
@@ -373,6 +374,7 @@ export default function CourseView() {
   const modules = modulesData?.data?.modules || []
   const lessons = lessonsData?.data?.lessons || []
   const hasModules = modules.length > 0
+  const legacyAttempt = test?.assessment_attempt
 
   useEffect(() => {
     if (selectedLesson || !lessons.length) return
@@ -432,7 +434,8 @@ export default function CourseView() {
   if (hasModules) {
     const totalLessons = lessons.length
     const completedLessons = lessons.filter(l => l.is_completed).length
-    const overallPct = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0
+    const completedModules = modules.filter(m => m.is_completed).length
+    const overallPct = modules.length > 0 ? Math.round((completedModules / modules.length) * 100) : 0
 
     return (
       <div className="p-4 md:p-6 max-w-7xl mx-auto">
@@ -446,7 +449,7 @@ export default function CourseView() {
             <div className="flex items-center gap-2 mb-1">
               <Layers size={13} className="text-brand-500" />
               <span className="text-xs text-brand-600 font-semibold">
-                {modules.length} module{modules.length !== 1 ? 's' : ''} · {completedLessons}/{totalLessons} lessons done
+                {completedModules}/{modules.length} module{modules.length !== 1 ? 's' : ''} complete · {completedLessons}/{totalLessons} lessons done
               </span>
             </div>
             <h1 className="page-title">{course.title}</h1>
@@ -465,7 +468,7 @@ export default function CourseView() {
                 </span>
               </div>
             </div>
-            {enrollData?.status === 'completed' && (
+            {overallPct === 100 && (
               <span className="badge badge-green flex items-center gap-1"><CheckCircle size={12} /> Completed</span>
             )}
           </div>
@@ -560,6 +563,16 @@ export default function CourseView() {
           </div>
         ) : course.requires_voice_test ? (
           <div className="card text-center py-12">
+            {legacyAttempt && (
+              <div className={`mb-5 rounded-2xl border p-4 text-left ${legacyAttempt.passed ? 'border-green-200 bg-green-50' : 'border-amber-200 bg-amber-50'}`}>
+                <p className={`text-sm font-semibold ${legacyAttempt.passed ? 'text-green-800' : 'text-amber-800'}`}>
+                  Previous assessment score: {Math.round(legacyAttempt.latest_score)}%
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Best score: {Math.round(legacyAttempt.best_score)}% · Attempts: {legacyAttempt.attempts_used}/{legacyAttempt.max_attempts}
+                </p>
+              </div>
+            )}
             <div className="w-16 h-16 rounded-2xl bg-coral-50 flex items-center justify-center mx-auto mb-4">
               <Mic size={26} className="text-coral-500" />
             </div>
@@ -568,12 +581,35 @@ export default function CourseView() {
               The AI will speak questions and listen to your verbal responses.
             </p>
             <button onClick={() => navigate(`/voice-test/${course._id}`)}
+              disabled={legacyAttempt?.attempts_remaining === 0}
               className="btn-primary flex items-center gap-2 mx-auto">
-              <Mic size={15} /> Start Voice Test
+              <Mic size={15} /> {legacyAttempt ? 'Retake Voice Test' : 'Start Voice Test'}
             </button>
+            {legacyAttempt?.attempts_remaining === 0 && (
+              <p className="text-xs text-red-500 mt-3">Maximum attempts reached.</p>
+            )}
           </div>
         ) : (
-          <TestTaker test={test} onSubmit={handleWrittenSubmit} />
+          <div className="card">
+            {legacyAttempt && (
+              <div className={`mb-5 rounded-2xl border p-4 ${legacyAttempt.passed ? 'border-green-200 bg-green-50' : 'border-amber-200 bg-amber-50'}`}>
+                <p className={`text-sm font-semibold ${legacyAttempt.passed ? 'text-green-800' : 'text-amber-800'}`}>
+                  Previous assessment score: {Math.round(legacyAttempt.latest_score)}%
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Best score: {Math.round(legacyAttempt.best_score)}% · Attempts: {legacyAttempt.attempts_used}/{legacyAttempt.max_attempts}
+                </p>
+              </div>
+            )}
+            {legacyAttempt?.attempts_remaining === 0 ? (
+              <div className="text-center py-8 text-gray-400">
+                <Lock size={30} className="mx-auto mb-2 opacity-40" />
+                <p className="text-sm">Maximum attempts reached.</p>
+              </div>
+            ) : (
+              <TestTaker test={test} onSubmit={handleWrittenSubmit} />
+            )}
+          </div>
         )
       )}
     </div>
