@@ -435,7 +435,7 @@ export default function CourseView() {
     const totalLessons = lessons.length
     const completedLessons = lessons.filter(l => l.is_completed).length
     const completedModules = modules.filter(m => m.is_completed).length
-    const overallPct = modules.length > 0 ? Math.round((completedModules / modules.length) * 100) : 0
+    const overallPct = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0
 
     return (
       <div className="p-4 md:p-6 max-w-7xl mx-auto">
@@ -468,7 +468,7 @@ export default function CourseView() {
                 </span>
               </div>
             </div>
-            {overallPct === 100 && (
+            {totalLessons > 0 && completedLessons === totalLessons && (
               <span className="badge badge-green flex items-center gap-1"><CheckCircle size={12} /> Completed</span>
             )}
           </div>
