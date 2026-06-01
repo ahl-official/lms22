@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { usersAPI, analyticsAPI, rolePlayAPI } from '../../services/api'
 import { Search, Users, BookOpen, TrendingUp, Mic, ChevronRight, Tag, Lock, Unlock, Loader2 } from 'lucide-react'
@@ -7,9 +7,39 @@ import { format } from 'date-fns'
 import { useAuthStore } from '../../store/authStore'
 import toast from 'react-hot-toast'
 
+const pct = (value) => Math.max(0, Math.min(100, Number(value) || 0))
+
+function ProgressRing({ value, size = 52 }) {
+  const normalized = pct(value)
+  const stroke = 4
+  const radius = (size - stroke) / 2
+  const circumference = 2 * Math.PI * radius
+  const dash = (normalized / 100) * circumference
+
+  return (
+    <div className="relative flex items-center justify-center flex-shrink-0" style={{ width: size, height: size }}>
+      <svg className="-rotate-90" width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#e5e7eb" strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={normalized >= 80 ? '#22c55e' : normalized > 0 ? '#6366f1' : '#d1d5db'}
+          strokeWidth={stroke}
+          strokeDasharray={`${dash} ${circumference - dash}`}
+          strokeLinecap="round"
+        />
+      </svg>
+      <span className="absolute text-xs font-bold text-brand-600">{normalized}%</span>
+    </div>
+  )
+}
+
 export default function Trainees() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(null)
+  const [courseFilter, setCourseFilter] = useState('all')
   const { user } = useAuthStore()
   const qc = useQueryClient()
 
@@ -47,6 +77,19 @@ export default function Trainees() {
   const trainees = traineesData?.data?.users || []
   const data = analytics?.data
   const locks = locksData?.data?.locks || []
+  const courseOptions = useMemo(() => (
+    (data?.enrollments || [])
+      .map(enr => ({
+        id: (enr.course_id?._id || enr.course_id)?.toString(),
+        title: enr.course_title || enr.course_id?.title || 'Unknown course',
+      }))
+      .filter(course => course.id)
+  ), [data?.enrollments])
+  const visibleEnrollments = useMemo(() => {
+    const enrollments = data?.enrollments || []
+    if (courseFilter === 'all') return enrollments
+    return enrollments.filter(enr => (enr.course_id?._id || enr.course_id)?.toString() === courseFilter)
+  }, [data?.enrollments, courseFilter])
   const lockedByCourse = locks.reduce((acc, lock) => {
     const cid = lock.course_id?._id || lock.course_id
     if (cid) acc[cid.toString()] = lock
@@ -99,7 +142,7 @@ export default function Trainees() {
               {trainees.map(t => (
                 <button
                   key={t._id}
-                  onClick={() => setSelected(t)}
+                  onClick={() => { setSelected(t); setCourseFilter('all') }}
                   className={`w-full text-left p-4 rounded-2xl border-2 transition-all ${selected?._id === t._id
                       ? 'border-brand-400 bg-brand-50 shadow-soft'
                       : 'border-transparent bg-white hover:border-brand-200 shadow-card'
@@ -182,24 +225,55 @@ export default function Trainees() {
                   </div>
 
                   <div className="card">
-                    <h3 className="font-semibold text-gray-800 mb-4">Course Progress</h3>
+                    <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+                      <h3 className="font-semibold text-gray-800">Course Progress</h3>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={() => setCourseFilter('all')}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${courseFilter === 'all'
+                              ? 'bg-brand-500 text-white border-brand-500'
+                              : 'bg-white text-gray-600 border-gray-200 hover:border-brand-200 hover:text-brand-600'
+                            }`}
+                        >
+                          All courses
+                        </button>
+                        {courseOptions.map(course => (
+                          <button
+                            key={course.id}
+                            onClick={() => setCourseFilter(course.id)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${courseFilter === course.id
+                                ? 'bg-brand-500 text-white border-brand-500'
+                                : 'bg-white text-gray-600 border-gray-200 hover:border-brand-200 hover:text-brand-600'
+                              }`}
+                          >
+                            {course.title}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <div className="space-y-3">
-                      {(data.enrollments || []).map(enr => {
+                      {visibleEnrollments.map(enr => {
                         const courseId = enr.course_id?._id || enr.course_id
                         const lock = courseId ? lockedByCourse[courseId.toString()] : null
+                        const progress = pct(enr.progress)
 
                         return (
                         <div key={enr._id} className={`flex items-center gap-3 p-3 rounded-xl ${lock ? 'bg-red-50 border border-red-100' : 'bg-gray-50'}`}>
+                          <ProgressRing value={progress} />
                           <div className="flex-1">
                             <p className="font-medium text-gray-700 text-sm">{enr.course_title}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              {enr.completed_lessons || 0}/{enr.lesson_count || 0} lessons
+                              {enr.module_count ? ` · ${enr.completed_modules || 0}/${enr.module_count} modules` : ''}
+                            </p>
                             <div className="flex items-center gap-2 mt-1">
                               <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                                 <div
                                   className="h-full bg-brand-500 rounded-full"
-                                  style={{ width: `${enr.progress || 0}%` }}
+                                  style={{ width: `${progress}%` }}
                                 />
                               </div>
-                              <span className="text-xs text-gray-500 flex-shrink-0">{enr.progress || 0}%</span>
+                              <span className="text-xs text-gray-500 flex-shrink-0">{progress}%</span>
                             </div>
                             {lock && (
                               <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
@@ -227,7 +301,7 @@ export default function Trainees() {
                           )}
                         </div>
                       )})}
-                      {!data.enrollments?.length && (
+                      {!visibleEnrollments.length && (
                         <p className="text-sm text-gray-400 text-center py-4">No enrollments yet</p>
                       )}
                     </div>

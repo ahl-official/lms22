@@ -14,6 +14,7 @@ import {
     Users, TrendingUp, Award, AlertTriangle, Search,
     ChevronDown, ChevronUp, CheckCircle,
     RefreshCw, Activity, XCircle, Minus, Mic, FileText,
+    BookOpen,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
 
@@ -36,14 +37,43 @@ const relativeTime = (date) => {
 }
 
 const initials = (name) => (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+const pct = (value) => Math.max(0, Math.min(100, Number(value) || 0))
 
 function MiniBar({ value, color = 'bg-brand-400' }) {
+    const width = pct(value)
     return (
         <div className="flex items-center gap-2">
             <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${Math.min(value, 100)}%` }} />
+                <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${width}%` }} />
             </div>
-            <span className="text-xs text-gray-500 w-8 text-right flex-shrink-0">{value}%</span>
+            <span className="text-xs text-gray-500 w-8 text-right flex-shrink-0">{width}%</span>
+        </div>
+    )
+}
+
+function ProgressRing({ value, size = 44 }) {
+    const normalized = pct(value)
+    const stroke = 4
+    const radius = (size - stroke) / 2
+    const circumference = 2 * Math.PI * radius
+    const dash = (normalized / 100) * circumference
+
+    return (
+        <div className="relative flex items-center justify-center flex-shrink-0" style={{ width: size, height: size }}>
+            <svg className="-rotate-90" width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+                <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#e5e7eb" strokeWidth={stroke} />
+                <circle
+                    cx={size / 2}
+                    cy={size / 2}
+                    r={radius}
+                    fill="none"
+                    stroke={normalized >= 80 ? '#22c55e' : normalized > 0 ? '#6366f1' : '#d1d5db'}
+                    strokeWidth={stroke}
+                    strokeDasharray={`${dash} ${circumference - dash}`}
+                    strokeLinecap="round"
+                />
+            </svg>
+            <span className="absolute text-[11px] font-bold text-brand-600">{normalized}%</span>
         </div>
     )
 }
@@ -85,6 +115,10 @@ function CourseRow({ course }) {
             {/* Course title */}
             <div className="flex-1 min-w-0">
                 <p className="font-medium text-gray-800 truncate">{course.course_title}</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                    {course.completed_lessons || 0}/{course.lesson_count || 0} lessons
+                    {course.module_count ? ` · ${course.completed_modules || 0}/${course.module_count} modules` : ''}
+                </p>
                 {assessment.last_attempt_at && (
                     <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
                         {course.last_attempt_type === 'voice'
@@ -103,7 +137,8 @@ function CourseRow({ course }) {
             </div>
 
             {/* Progress */}
-            <div className="w-28 flex-shrink-0">
+            <div className="w-40 flex-shrink-0 flex items-center gap-3">
+                <ProgressRing value={course.progress} />
                 <MiniBar value={course.progress} color={progressColor} />
             </div>
 
@@ -243,7 +278,7 @@ function StudentRow({ student }) {
                         <>
                             <div className="flex items-center gap-4 px-3 mb-1">
                                 <p className="flex-1 text-xs font-semibold text-gray-400 uppercase tracking-wide">Course</p>
-                                <p className="w-28 text-xs font-semibold text-gray-400 text-center uppercase tracking-wide flex-shrink-0">Progress</p>
+                                <p className="w-40 text-xs font-semibold text-gray-400 text-center uppercase tracking-wide flex-shrink-0">Progress</p>
                                 <p className="w-14 text-xs font-semibold text-gray-400 text-center uppercase tracking-wide flex-shrink-0">Assess</p>
                                 <p className="w-14 text-xs font-semibold text-gray-400 text-right uppercase tracking-wide flex-shrink-0">Best</p>
                                 <p className="w-24 text-xs font-semibold text-gray-400 text-center uppercase tracking-wide flex-shrink-0">Roleplay</p>
@@ -265,6 +300,7 @@ export default function AdminStudentProgress() {
     const [search, setSearch] = useState('')
     const [categoryFilter, setCategoryFilter] = useState('')
     const [statusFilter, setStatusFilter] = useState('all')
+    const [courseFilter, setCourseFilter] = useState('all')
     const [debouncedSearch, setDebouncedSearch] = useState('')
     const debounceRef = useState(null)
 
@@ -293,6 +329,26 @@ export default function AdminStudentProgress() {
     const categories = catData?.data?.categories || []
     const students = data?.data?.students || []
     const stats = data?.data?.stats || {}
+    const courseOptions = useMemo(() => {
+        const map = new Map()
+        for (const student of students) {
+            for (const course of student.courses || []) {
+                if (course.course_id && !map.has(course.course_id)) {
+                    map.set(course.course_id, course.course_title || 'Unknown course')
+                }
+            }
+        }
+        return Array.from(map, ([id, title]) => ({ id, title })).sort((a, b) => a.title.localeCompare(b.title))
+    }, [students])
+    const visibleStudents = useMemo(() => {
+        if (courseFilter === 'all') return students
+        return students
+            .map(student => ({
+                ...student,
+                courses: (student.courses || []).filter(course => course.course_id === courseFilter),
+            }))
+            .filter(student => student.courses.length > 0)
+    }, [students, courseFilter])
 
     const lastUpdated = dataUpdatedAt ? format(new Date(dataUpdatedAt), 'h:mm a') : null
 
@@ -425,18 +481,46 @@ export default function AdminStudentProgress() {
                 })}
             </div>
 
+            {/* Course toggles */}
+            <div className="flex items-center gap-2 mb-5 flex-wrap">
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wide mr-1">
+                    <BookOpen size={13} /> Courses
+                </span>
+                <button
+                    onClick={() => setCourseFilter('all')}
+                    className={`px-3.5 py-2 rounded-xl text-sm font-semibold transition-all border ${courseFilter === 'all'
+                            ? 'bg-brand-500 text-white border-brand-500'
+                            : 'bg-white text-gray-600 border-gray-200 hover:border-brand-200 hover:text-brand-600'
+                        }`}
+                >
+                    All courses
+                </button>
+                {courseOptions.map(course => (
+                    <button
+                        key={course.id}
+                        onClick={() => setCourseFilter(course.id)}
+                        className={`px-3.5 py-2 rounded-xl text-sm font-semibold transition-all border ${courseFilter === course.id
+                                ? 'bg-brand-500 text-white border-brand-500'
+                                : 'bg-white text-gray-600 border-gray-200 hover:border-brand-200 hover:text-brand-600'
+                            }`}
+                    >
+                        {course.title}
+                    </button>
+                ))}
+            </div>
+
             {/* Student list */}
             {isLoading ? (
                 <div className="flex justify-center py-20">
                     <div className="w-10 h-10 border-4 border-brand-200 border-t-brand-500 rounded-full animate-spin" />
                 </div>
-            ) : students.length === 0 ? (
+            ) : visibleStudents.length === 0 ? (
                 <div className="text-center py-20">
                     <Users size={40} className="mx-auto mb-3 text-gray-300" />
                     <p className="text-gray-500 font-medium">No students found</p>
-                    {(debouncedSearch || categoryFilter || statusFilter !== 'all') && (
+                    {(debouncedSearch || categoryFilter || statusFilter !== 'all' || courseFilter !== 'all') && (
                         <button
-                            onClick={() => { setSearch(''); setDebouncedSearch(''); setCategoryFilter(''); setStatusFilter('all') }}
+                            onClick={() => { setSearch(''); setDebouncedSearch(''); setCategoryFilter(''); setStatusFilter('all'); setCourseFilter('all') }}
                             className="text-brand-500 text-sm mt-2 hover:underline"
                         >
                             Clear filters
@@ -458,14 +542,15 @@ export default function AdminStudentProgress() {
                     </div>
 
                     <div className="space-y-2">
-                        {students.map(student => (
+                        {visibleStudents.map(student => (
                             <StudentRow key={student._id} student={student} />
                         ))}
                     </div>
 
                     <p className="text-xs text-gray-400 text-center mt-4">
-                        Showing {students.length} student{students.length !== 1 ? 's' : ''}
+                        Showing {visibleStudents.length} student{visibleStudents.length !== 1 ? 's' : ''}
                         {statusFilter !== 'all' && ` with status: ${STATUS_LABELS[statusFilter]}`}
+                        {courseFilter !== 'all' && ` in ${courseOptions.find(c => c.id === courseFilter)?.title || 'selected course'}`}
                     </p>
                 </>
             )}

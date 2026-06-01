@@ -9,6 +9,75 @@ const RolePlayProgress = require('../models/RolePlayProgress');
 const RolePlayAttempt = require('../models/RolePlayAttempt');
 const LessonProgress = require('../models/LessonProgress');
 const { authenticate, authorize } = require('../middleware/auth');
+const { getModuleCompletionSnapshot } = require('../services/courseProgressService');
+
+const idString = (value) => (value?._id || value)?.toString?.() || null;
+
+const buildCourseModuleMap = (modules) => modules.reduce((acc, mod) => {
+  const courseId = idString(mod.course_id);
+  if (!courseId) return acc;
+  if (!acc[courseId]) acc[courseId] = [];
+  acc[courseId].push(mod);
+  return acc;
+}, {});
+
+const deriveEnrollmentProgress = (enrollment, modulesByCourse, snapshot) => {
+  const base = enrollment.toObject ? enrollment.toObject() : { ...enrollment };
+  const courseId = idString(base.course_id);
+  const courseModules = courseId ? (modulesByCourse[courseId] || []) : [];
+  const totalModules = courseModules.length;
+
+  const completedModules = courseModules.filter((mod) => {
+    const moduleId = idString(mod);
+    const total = snapshot.totalByModule[moduleId] || 0;
+    return total > 0 && (snapshot.completedByModule[moduleId] || 0) >= total;
+  }).length;
+
+  const totals = courseModules.reduce((acc, mod) => {
+    const moduleId = idString(mod);
+    acc.totalLessons += snapshot.totalByModule[moduleId] || 0;
+    acc.completedLessons += snapshot.completedByModule[moduleId] || 0;
+    return acc;
+  }, { totalLessons: 0, completedLessons: 0 });
+
+  const hasLessonProgress = totals.totalLessons > 0;
+  const progress = hasLessonProgress
+    ? Math.round((totals.completedLessons / totals.totalLessons) * 100)
+    : (base.progress || 0);
+  const moduleProgress = totalModules > 0
+    ? Math.round((completedModules / totalModules) * 100)
+    : progress;
+  const status = hasLessonProgress
+    ? (totals.completedLessons === totals.totalLessons ? 'completed' : totals.completedLessons > 0 ? 'in_progress' : 'not_started')
+    : (base.status || 'not_started');
+
+  return {
+    ...base,
+    progress,
+    module_progress: moduleProgress,
+    status,
+    module_count: totalModules,
+    completed_modules: completedModules,
+    lesson_count: totals.totalLessons,
+    completed_lessons: totals.completedLessons,
+  };
+};
+
+const enrichEnrollmentsWithProgress = async (traineeId, enrollments) => {
+  const courseIds = [...new Set(enrollments.map(e => idString(e.course_id)).filter(Boolean))];
+  if (!courseIds.length) return enrollments.map(e => (e.toObject ? e.toObject() : e));
+
+  const modules = await Module.find({ course_id: { $in: courseIds }, is_published: true })
+    .select('_id course_id')
+    .lean();
+  const snapshot = await getModuleCompletionSnapshot({
+    traineeId,
+    moduleIds: modules.map(mod => mod._id),
+  });
+  const modulesByCourse = buildCourseModuleMap(modules);
+
+  return enrollments.map(e => deriveEnrollmentProgress(e, modulesByCourse, snapshot));
+};
 
 // GET /api/analytics/overview
 router.get('/overview', authenticate, authorize('admin', 'trainer'), async (req, res, next) => {
@@ -138,13 +207,14 @@ router.get('/trainee/:traineeId', authenticate, authorize('admin', 'trainer'), a
         .limit(10),
     ]);
 
-    const completed = enrollments.filter(e => e.status === 'completed').length;
+    const enrichedEnrollments = await enrichEnrollmentsWithProgress(traineeId, enrollments);
+    const completed = enrichedEnrollments.filter(e => e.status === 'completed').length;
     const voiceAttemptCount = recentAttempts.filter(a => a.test_type === 'voice').length;
 
     res.json({
       success: true,
-      enrollments: enrollments.map(e => ({
-        ...e.toObject(),
+      enrollments: enrichedEnrollments.map(e => ({
+        ...e,
         course_title: e.course_id?.title,
         requires_voice_test: e.course_id?.requires_voice_test,
       })),
@@ -403,9 +473,9 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
     }
 
     // ── Build student summaries ──────────────────────────────────────────────
-    const students = trainees.map(trainee => {
+    const students = await Promise.all(trainees.map(async (trainee) => {
       const tid = trainee._id.toString();
-      const traineeEnrols = enrollByTrainee[tid] || [];
+      const traineeEnrols = await enrichEnrollmentsWithProgress(tid, enrollByTrainee[tid] || []);
       const traineeAttempts = attemptByTrainee[tid] || [];
       const traineeRolePlays = rolePlayByTrainee[tid] || [];
       const traineeRolePlayAttempts = rolePlayAttemptByTrainee[tid] || [];
@@ -471,6 +541,11 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
           course_id: cid,
           course_title: e.course_id?.title || 'Unknown course',
           progress: e.progress || 0,
+          module_progress: e.module_progress || 0,
+          module_count: e.module_count || 0,
+          completed_modules: e.completed_modules || 0,
+          lesson_count: e.lesson_count || 0,
+          completed_lessons: e.completed_lessons || 0,
           status: e.status || 'not_started',
           best_score: e.best_score ?? null,
           avg_score: courseScores.length > 0
@@ -583,7 +658,7 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
           timeline,
         },
       };
-    });
+    }));
 
     // Apply status filter after computing statuses
     const filtered = status ? students.filter(s => s.summary.status === status) : students;
