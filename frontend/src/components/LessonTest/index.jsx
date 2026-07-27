@@ -199,6 +199,7 @@ export default function LessonTestPanel({ lesson, onComplete, locked = false, ro
     const navigate = useNavigate()
     const qc = useQueryClient()
     const [submitting, setSubmitting] = useState(false)
+    const [voiceLanguage, setVoiceLanguage] = useState('en')
 
     const linkedTest = lesson.test_id
     const hasLinkedTest = !!linkedTest && linkedTest.is_active !== false
@@ -299,8 +300,19 @@ export default function LessonTestPanel({ lesson, onComplete, locked = false, ro
                 <p className="text-gray-500 text-sm mb-6 max-w-sm mx-auto">
                     The AI will speak each question out loud and listen to your verbal responses.
                 </p>
+                <div className="max-w-xs mx-auto mb-5 text-left">
+                    <label className="text-xs font-semibold text-gray-600 block mb-1.5">Question language</label>
+                    <select
+                        className="input-field text-sm"
+                        value={voiceLanguage}
+                        onChange={e => setVoiceLanguage(e.target.value)}
+                    >
+                        <option value="en">English</option>
+                        <option value="hi">हिन्दी (Hindi)</option>
+                    </select>
+                </div>
                 <button
-                    onClick={() => navigate(`/voice-test/${lesson.course_id}?lesson_id=${lesson._id}`)}
+                    onClick={() => navigate(`/voice-test/${lesson.course_id}?lesson_id=${lesson._id}&language=${voiceLanguage}`)}
                     disabled={priorAttempt?.attempts_remaining === 0}
                     className="btn-primary flex items-center gap-2 mx-auto"
                 >
