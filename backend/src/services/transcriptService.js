@@ -339,16 +339,53 @@ const transcribeAudioUrl = async (audioUrl) => {
   return transcript.text
 }
 
-const transcribeAudioBuffer = async (buffer, contentType = 'audio/webm') => {
+const transcribeAudioBuffer = async (buffer, contentType = 'audio/webm', options = {}) => {
   if (!process.env.ASSEMBLYAI_API_KEY) {
     throw new Error('ASSEMBLYAI_API_KEY is not set in your .env file.')
   }
   const client = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY })
   const uploadUrl = await client.files.upload(buffer, { contentType })
-  const transcript = await client.transcripts.transcribe({ audio_url: uploadUrl })
+
+  const request = { audio_url: uploadUrl }
+  const language = String(options.language || '').toLowerCase()
+  if (language === 'hi' || language === 'hi-in') {
+    // Force Hindi. Auto language detection often mislabels short Hinglish
+    // clips as English and invents words like "Capita" for "meko kya pata".
+    request.language_code = 'hi'
+  } else if (language === 'en' || language === 'en-us' || language === 'en-in') {
+    request.language_code = 'en'
+  } else if (options.languageDetection) {
+    request.language_detection = true
+  }
+
+  const transcript = await client.transcripts.transcribe(request)
   if (transcript.status === 'error') throw new Error(`AssemblyAI error: ${transcript.error}`)
-  return transcript.text
+  return transcript.text || ''
 }
+
+const hasDevanagari = (text = '') => /[\u0900-\u097F]/.test(text)
+
+/**
+ * Short English-looking STT output on a Hindi test is usually a mishear
+ * (e.g. "Capita." for "मेको क्या पता"), not a real answer.
+ */
+const isWeakHindiTranscript = (text = '') => {
+  const cleaned = String(text)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!cleaned) return true
+  if (cleaned.length < 3) return true
+
+  const words = cleaned.split(' ').filter(Boolean)
+  if (hasDevanagari(cleaned)) return words.length === 0
+
+  // Latin-only and very short → likely English hallucination on Hindi audio
+  if (words.length <= 2 && cleaned.length <= 24) return true
+  return false
+}
+
 
 const fetchTranscript = async (url) => {
   const detected = detectContentSource(url)
@@ -376,4 +413,6 @@ module.exports = {
   fetchGumletTranscript,
   transcribeAudioBuffer,
   transcribeAudioUrl,
+  isWeakHindiTranscript,
+  hasDevanagari,
 }

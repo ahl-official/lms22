@@ -11,6 +11,7 @@
     "dev:backend": "npm --workspace backend run dev",
     "dev:frontend": "npm --workspace frontend run dev",
     "start": "npm --workspace backend start",
-    "seed": "npm --workspace backend run seed"
+    "seed": "npm --workspace backend run seed",
+    "seed:demo": "npm --workspace backend run seed:demo"
   }
 }

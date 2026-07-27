@@ -271,6 +271,7 @@ export default function CourseView() {
   const qc = useQueryClient()
   const [tab, setTab] = useState('video')
   const [selectedLesson, setSelectedLesson] = useState(null)
+  const [voiceLanguage, setVoiceLanguage] = useState('en')
 
   const { data: courseData, isLoading } = useQuery({
     queryKey: ['course', id],
@@ -580,7 +581,18 @@ export default function CourseView() {
             <p className="text-gray-500 text-sm mb-6 max-w-sm mx-auto">
               The AI will speak questions and listen to your verbal responses.
             </p>
-            <button onClick={() => navigate(`/voice-test/${course._id}`)}
+            <div className="max-w-xs mx-auto mb-5 text-left">
+              <label className="text-xs font-semibold text-gray-600 block mb-1.5">Question language</label>
+              <select
+                className="input-field text-sm"
+                value={voiceLanguage}
+                onChange={e => setVoiceLanguage(e.target.value)}
+              >
+                <option value="en">English</option>
+                <option value="hi">हिन्दी (Hindi)</option>
+              </select>
+            </div>
+            <button onClick={() => navigate(`/voice-test/${course._id}?language=${voiceLanguage}`)}
               disabled={legacyAttempt?.attempts_remaining === 0}
               className="btn-primary flex items-center gap-2 mx-auto">
               <Mic size={15} /> {legacyAttempt ? 'Retake Voice Test' : 'Start Voice Test'}

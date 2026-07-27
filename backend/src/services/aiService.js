@@ -5,7 +5,7 @@ let _chat = null;
 const getChatClient = () => {
   if (!_chat) {
     _chat = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY,
       baseURL: 'https://openrouter.ai/api/v1',
       defaultHeaders: {
         'HTTP-Referer': process.env.FRONTEND_URL || 'http://localhost:5173',
@@ -17,6 +17,67 @@ const getChatClient = () => {
 };
 
 const CHAT_MODEL = process.env.LLM_MODEL || 'openai/gpt-4o-mini';
+
+const normalizeAssessmentLanguage = (language) => language === 'hi' ? 'hi' : 'en';
+const hindiStyle = () => (process.env.HINDI_STYLE || 'hinglish').toLowerCase();
+const assessmentLanguageLabel = (language) => {
+  if (normalizeAssessmentLanguage(language) !== 'hi') return 'English';
+  return hindiStyle() === 'devanagari'
+    ? 'natural spoken Hindi written in Devanagari'
+    : 'natural conversational Hinglish (Hindi words in Devanagari, familiar English business words kept in English)';
+};
+
+const hinglishSpokenStyleInstruction = `Write natural spoken Hinglish for voice playback:
+- Hindi grammar/connectors in Devanagari (आप, क्या, कैसे, पहले, चाहिए, etc.).
+- Keep common English business/sales words in English Latin script, do NOT translate them into pure Hindi.
+  Keep examples like: customer, product, service, price, discount, offer, follow-up, booking, appointment, feedback, training, team, call, meeting, demo, objection, value, benefit, recommendation.
+- Do NOT convert everything into formal/pure Hindi (avoid forced words like उत्पाद/सेवा/ग्राहक when customer/product/service sound more natural).
+- Never use Romanized Hindi (no "aapko", "kya", "chahiye" in Latin).
+- Keep brand names, people names, numbers, and URLs unchanged.`;
+
+const translateVoiceQuestions = async (questions = [], language = 'en') => {
+  const normalizedLanguage = normalizeAssessmentLanguage(language);
+  if (normalizedLanguage === 'en' || !questions.length) return questions;
+
+  const client = getChatClient();
+  const styleInstruction = hindiStyle() === 'devanagari'
+    ? 'Write all Hindi words in Devanagari. Use natural, easy spoken Hindi. Do not use Romanized Hindi or English translations, except proper names, product names, URLs, and unavoidable technical names.'
+    : hinglishSpokenStyleInstruction;
+  let response;
+  try {
+    response = await client.chat.completions.create({
+      model: CHAT_MODEL,
+      messages: [
+        {
+          role: 'system',
+          content: `Rewrite the following voice-assessment questions in ${assessmentLanguageLabel('hi')} for spoken audio.
+Return ONLY valid JSON as an array. Preserve the exact JSON structure and meaning.
+${styleInstruction}
+Rewrite question, expected_answer, and key_points. Preserve product names, company names, people names, numbers, URLs, and technical terms exactly when appropriate.
+Do not add explanations or markdown.`,
+        },
+        { role: 'user', content: JSON.stringify(questions) },
+      ],
+      temperature: 0.2,
+    });
+  } catch (err) {
+    const aiError = new Error(
+      err?.status === 401
+        ? 'Hindi voice tests require a valid AI API key in backend/.env.'
+        : 'The AI service is unavailable. Please try again later.'
+    );
+    aiError.status = 502;
+    aiError.cause = err;
+    throw aiError;
+  }
+
+  const parsed = parseJSON(response.choices[0].message.content);
+  const translated = Array.isArray(parsed) ? parsed : parsed.questions;
+  if (!Array.isArray(translated) || translated.length !== questions.length) {
+    throw new Error('AI returned an invalid Hindi question translation');
+  }
+  return translated.map((question, index) => ({ ...questions[index], ...question }));
+};
 
 const parseJSON = (content) => {
   try { return JSON.parse(content); } catch (_) { }
@@ -76,16 +137,21 @@ const answerTier = (scoreOutOfTen) => {
   return 'corrective';
 };
 
-const normalizeEvaluation = (evaluation, userAnswer) => {
+const normalizeEvaluation = (evaluation, userAnswer, language = 'en') => {
   if (isBlankAnswer(userAnswer)) {
+    const isHindi = normalizeAssessmentLanguage(language) === 'hi';
     return {
       ...evaluation,
       overall_score: 0,
       feedback_tier: 'corrective',
       what_correct: '',
-      what_missed: evaluation?.what_missed || 'No answer was provided.',
-      feedback: 'No response was captured, so this question scores 0. Next time, give at least one specific detail from the lesson.',
-      spoken_feedback: 'No response was captured, so this one scores zero. Try giving one specific detail next time.',
+      what_missed: evaluation?.what_missed || (isHindi ? 'कोई उत्तर नहीं दिया गया।' : 'No answer was provided.'),
+      feedback: isHindi
+        ? 'कोई उत्तर रिकॉर्ड नहीं हुआ, इसलिए इस प्रश्न के लिए 0 अंक हैं। अगली बार पाठ से कम से कम एक विशेष जानकारी बताइए।'
+        : 'No response was captured, so this question scores 0. Next time, give at least one specific detail from the lesson.',
+      spoken_feedback: isHindi
+        ? 'आपका उत्तर रिकॉर्ड नहीं हुआ, इसलिए इस प्रश्न के लिए शून्य अंक हैं। अगली बार कम से कम एक विशेष जानकारी बताइए।'
+        : 'No response was captured, so this one scores zero. Try giving one specific detail next time.',
     };
   }
 
@@ -323,9 +389,9 @@ const scoreWrittenAttempt = async (questions, answers) => {
 };
 
 // ── Per-answer evaluation ─────────────────────────────────────────────────────
-const evaluateAnswer = async ({ question, userAnswer, courseTranscript = '', category = '' }) => {
+const evaluateAnswer = async ({ question, userAnswer, courseTranscript = '', category = '', language = 'en' }) => {
   if (isBlankAnswer(userAnswer)) {
-    return normalizeEvaluation({}, userAnswer);
+    return normalizeEvaluation({}, userAnswer, language);
   }
 
   const client = getChatClient();
@@ -335,8 +401,14 @@ const evaluateAnswer = async ({ question, userAnswer, courseTranscript = '', cat
 
   const keyPoints = question.key_points || [];
   const trainingExcerpt = courseTranscript.slice(0, 1500);
+  const responseLanguage = assessmentLanguageLabel(language);
+  const spokenStyleNote = hindiStyle() === 'devanagari'
+    ? 'Use natural spoken Hindi in Devanagari.'
+    : 'Use conversational Hinglish: Hindi in Devanagari, keep familiar English business words in English (customer, product, price, follow-up, etc). Do not translate every English word into pure Hindi.';
 
   const systemPrompt = isObjection ? `You are evaluating a sales trainee's objection-handling response.
+
+RESPONSE LANGUAGE: Write all feedback and spoken_feedback in ${responseLanguage}. ${spokenStyleNote} Keep scores and JSON keys in English.
 
 EVALUATION CRITERIA:
 - IGNORE filler words (um, uh, like) and minor stammering.
@@ -366,6 +438,8 @@ USER ANSWER: "${userAnswer}"
 Return ONLY valid JSON:
 {"tone":0,"technique":0,"key_points_covered":0,"overall_score":0,"what_correct":"","what_missed":"","feedback":"","spoken_feedback":"Short 1-2 sentence TTS feedback","feedback_tier":"positive","evidence_from_training":""}`
     : `You are a supportive sales training evaluator. Your goal is to verify understanding, not memorization.
+
+RESPONSE LANGUAGE: Write all feedback and spoken_feedback in ${responseLanguage}. ${spokenStyleNote} Keep scores and JSON keys in English.
 
 IMPORTANT:
 1. IGNORE filler words, hesitations, conversational fluff.
@@ -404,8 +478,12 @@ Return ONLY valid JSON:
     console.warn('Answer evaluation LLM failed:', err.message);
     evaluation = {
       overall_score: 0,
-      feedback: 'Evaluation failed due to a technical error.',
-      spoken_feedback: 'Sorry, I could not evaluate that answer.',
+      feedback: normalizeAssessmentLanguage(language) === 'hi'
+        ? 'तकनीकी समस्या के कारण उत्तर का मूल्यांकन नहीं हो सका।'
+        : 'Evaluation failed due to a technical error.',
+      spoken_feedback: normalizeAssessmentLanguage(language) === 'hi'
+        ? 'क्षमा करें, मैं इस उत्तर का मूल्यांकन नहीं कर सका।'
+        : 'Sorry, I could not evaluate that answer.',
     };
   }
 
@@ -443,7 +521,7 @@ Return ONLY valid JSON:
         evaluation.feedback = evaluation.feedback || 'Good client-centered answer. You gave the customer a useful next step and kept the conversation moving.';
       }
     }
-    evaluation = normalizeEvaluation(evaluation, userAnswer);
+    evaluation = normalizeEvaluation(evaluation, userAnswer, language);
     if (!evaluation.spoken_feedback) {
       const finalScore = parseFloat(evaluation.overall_score) || 0;
       if (finalScore >= 8) evaluation.spoken_feedback = 'Nice work, that was client-friendly and moved the conversation forward.';
@@ -452,7 +530,7 @@ Return ONLY valid JSON:
     }
   } catch (_) { }
 
-  return normalizeEvaluation(evaluation, userAnswer);
+  return normalizeEvaluation(evaluation, userAnswer, language);
 };
 
 // ── Score single audio file voice attempt ─────────────────────────────────────
@@ -504,7 +582,7 @@ Return ONLY valid JSON:
 };
 
 // ── Generate next dynamic question ────────────────────────────────────────────
-const generateNextQuestion = async ({ courseTitle, transcript, conversation, fallbackQuestions, questionNumber, totalQuestions }) => {
+const generateNextQuestion = async ({ courseTitle, transcript, conversation, fallbackQuestions, questionNumber, totalQuestions, language = 'en' }) => {
   const client = getChatClient();
 
   const lastAnswer = conversation[conversation.length - 1]?.answer || '';
@@ -523,6 +601,7 @@ const generateNextQuestion = async ({ courseTitle, transcript, conversation, fal
         content: `You are an interactive voice assessor for "${courseTitle}".
 Generate ONE follow-up question that builds on the conversation, probes deeper if superficial, or moves to a new topic if thorough.
 Conversational, single sentence ending in ?
+Ask the question in ${assessmentLanguageLabel(language)}.
 Return ONLY the question text.`,
       },
       { role: 'user', content: `Transcript:\n${transcript.slice(0, 4000)}\n\nConversation:\n${conversationText}\n\nThis is question ${questionNumber} of ${totalQuestions}.` },
@@ -535,7 +614,7 @@ Return ONLY the question text.`,
 };
 
 // ── Score full conversation at end of session ─────────────────────────────────
-const scoreConversation = async ({ courseTitle, transcript, conversation }) => {
+const scoreConversation = async ({ courseTitle, transcript, conversation, language = 'en' }) => {
   if (!hasAnsweredAnyQuestion(conversation)) {
     return {
       score: 0,
@@ -574,6 +653,7 @@ const scoreConversation = async ({ courseTitle, transcript, conversation }) => {
       {
         role: 'system',
         content: `You are a friendly, practical assessor scoring a verbal exam for "${courseTitle}".
+Write all feedback, strengths, improvement areas, actions, and question_scores.feedback in ${assessmentLanguageLabel(language)}. ${hindiStyle() === 'devanagari' ? 'Use natural spoken Hindi in Devanagari.' : 'Use conversational Hinglish: Hindi in Devanagari with familiar English business words kept in English.'} Keep JSON keys in English.
 Return ONLY valid JSON, no markdown:
 {
   "score": 85,
@@ -641,6 +721,151 @@ const generateEmbedding = async (text) => {
   return pineconeEmbed(text);
 };
 
+/**
+ * Repair short Hindi/Hinglish STT errors before scoring.
+ * Example: "Capita." → "मुझे क्या पता"
+ */
+const repairHindiVoiceTranscript = async (rawTranscript = '') => {
+  const raw = String(rawTranscript || '').trim();
+  if (!raw) return { transcript: '', confidence: 'low', repaired: false };
+
+  try {
+    const client = getChatClient();
+    const response = await client.chat.completions.create({
+      model: CHAT_MODEL,
+      temperature: 0,
+      messages: [
+        {
+          role: 'system',
+          content: `You repair speech-to-text errors for Hindi/Hinglish voice-assessment answers.
+Trainees speak Hindi or Hinglish. STT often mishears short phrases as English nonsense
+(example: spoken "meko kya pata" / "मुझे क्या पता" → STT "Capita").
+
+Return ONLY valid JSON:
+{"transcript":"...","confidence":"high|medium|low"}
+
+Rules:
+- Recover the most likely spoken meaning.
+- Write Hindi words in Devanagari. Keep familiar English business/product words in Latin when natural.
+- Keep the answer short if the trainee clearly said they don't know, were unsure, or gave a filler.
+- Do NOT invent a full correct sales answer.
+- If the STT text is already clear Hindi/Hinglish, return a lightly cleaned version.
+- If meaning cannot be recovered, return {"transcript":"","confidence":"low"}.`,
+        },
+        {
+          role: 'user',
+          content: JSON.stringify({ stt_transcript: raw }),
+        },
+      ],
+    });
+
+    const parsed = parseJSON(response.choices[0].message.content || '{}');
+    const transcript = String(parsed.transcript || '').trim();
+    const confidence = ['high', 'medium', 'low'].includes(parsed.confidence)
+      ? parsed.confidence
+      : (transcript ? 'medium' : 'low');
+
+    return {
+      transcript: transcript || raw,
+      confidence,
+      repaired: Boolean(transcript) && transcript !== raw,
+    };
+  } catch (err) {
+    console.warn('[ai:hindi_stt_repair_failed]', err.message);
+    return { transcript: raw, confidence: 'low', repaired: false };
+  }
+};
+
+const DISPLAY_HINGLISH_SYSTEM = `Convert text to Roman Hinglish for on-screen display only.
+Rules:
+- Use Latin script only (no Devanagari).
+- Keep natural spoken Hinglish, e.g. "Mujhe kya pata", "Customer ko pehle samjho".
+- Keep English product/brand/technical terms in English.
+- Do not change meaning. Do not add new advice.
+- Keep punctuation simple.
+Return ONLY valid JSON.`;
+
+/**
+ * Display-only: convert Hindi/Devanagari text to Roman Hinglish.
+ * Does not affect scoring or TTS source text.
+ */
+const toRomanHinglishDisplay = async (text = '') => {
+  const raw = String(text || '').trim();
+  if (!raw) return '';
+  if (!/[\u0900-\u097F]/.test(raw)) return raw;
+
+  try {
+    const client = getChatClient();
+    const response = await client.chat.completions.create({
+      model: CHAT_MODEL,
+      temperature: 0,
+      messages: [
+        { role: 'system', content: `${DISPLAY_HINGLISH_SYSTEM}\n{"text":"..."}` },
+        { role: 'user', content: JSON.stringify({ text: raw }) },
+      ],
+    });
+    const parsed = parseJSON(response.choices[0].message.content || '{}');
+    return String(parsed.text || raw).trim() || raw;
+  } catch (err) {
+    console.warn('[ai:display_hinglish_failed]', err.message);
+    return raw;
+  }
+};
+
+/**
+ * Batch display-only conversion. Preserves order. Non-Hindi strings pass through.
+ */
+const toRomanHinglishDisplayMany = async (texts = []) => {
+  const list = (texts || []).map((t) => String(t || '').trim());
+  if (!list.length) return [];
+  if (!list.some((t) => /[\u0900-\u097F]/.test(t))) return list;
+
+  try {
+    const client = getChatClient();
+    const response = await client.chat.completions.create({
+      model: CHAT_MODEL,
+      temperature: 0,
+      messages: [
+        {
+          role: 'system',
+          content: `${DISPLAY_HINGLISH_SYSTEM}
+Input is a JSON array of strings. Return {"texts":["..."]} with the same length and order.`,
+        },
+        { role: 'user', content: JSON.stringify({ texts: list }) },
+      ],
+    });
+    const parsed = parseJSON(response.choices[0].message.content || '{}');
+    const out = Array.isArray(parsed.texts) ? parsed.texts : null;
+    if (!out || out.length !== list.length) return list;
+    return out.map((item, i) => String(item || list[i]).trim() || list[i]);
+  } catch (err) {
+    console.warn('[ai:display_hinglish_batch_failed]', err.message);
+    return list;
+  }
+};
+
+/**
+ * Attach display_* Roman Hinglish fields for UI. Canonical fields stay unchanged.
+ */
+const withHinglishDisplayFields = async (evaluation = {}, language = 'en') => {
+  if (normalizeAssessmentLanguage(language) !== 'hi' || !evaluation || typeof evaluation !== 'object') {
+    return evaluation;
+  }
+
+  const keys = ['feedback', 'what_correct', 'what_missed'];
+  const source = keys.map((key) => evaluation[key] || '');
+  const displayed = await toRomanHinglishDisplayMany(source);
+  const next = { ...evaluation };
+  keys.forEach((key, index) => {
+    if (evaluation[key]) next[`${key}_display`] = displayed[index] || evaluation[key];
+  });
+  // spoken_feedback stays canonical for TTS; optional display copy for UI if shown
+  if (evaluation.spoken_feedback) {
+    next.spoken_feedback_display = await toRomanHinglishDisplay(evaluation.spoken_feedback);
+  }
+  return next;
+};
+
 module.exports = {
   generateTest,
   scoreWrittenAttempt,
@@ -649,7 +874,13 @@ module.exports = {
   evaluateAnswer,
   generateNextQuestion,
   scoreConversation,
+  translateVoiceQuestions,
+  normalizeAssessmentLanguage,
   determineAdaptiveDifficulty,
   generateEmbedding,
   normalizeBrandTerms,
+  repairHindiVoiceTranscript,
+  toRomanHinglishDisplay,
+  toRomanHinglishDisplayMany,
+  withHinglishDisplayFields,
 };

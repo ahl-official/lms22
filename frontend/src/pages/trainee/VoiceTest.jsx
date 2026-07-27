@@ -60,6 +60,7 @@ function ResultScreen({ result, courseTitle, conversation, onDone }) {
     const score = result?.score || 0
     const color = score >= 80 ? 'text-green-500' : score >= 60 ? 'text-amber-500' : 'text-red-500'
     const bg = score >= 80 ? 'bg-green-50' : score >= 60 ? 'bg-amber-50' : 'bg-red-50'
+    const overallFeedback = result?.feedback_display || result?.feedback
 
     return (
         <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
@@ -93,10 +94,10 @@ function ResultScreen({ result, courseTitle, conversation, onDone }) {
                     </div>
                 )}
 
-                {result?.feedback && (
+                {overallFeedback && (
                     <div className="bg-brand-50 rounded-2xl p-4 mb-6">
                         <p className="text-sm font-semibold text-brand-700 mb-1">Overall Feedback</p>
-                        <p className="text-sm text-gray-700">{result.feedback}</p>
+                        <p className="text-sm text-gray-700">{overallFeedback}</p>
                     </div>
                 )}
 
@@ -105,8 +106,12 @@ function ResultScreen({ result, courseTitle, conversation, onDone }) {
                         <p className="text-sm font-semibold text-gray-700">Question Breakdown</p>
                         {conversation.map((turn, i) => (
                             <div key={i} className="bg-gray-50 rounded-xl p-3">
-                                <p className="text-xs font-semibold text-gray-600 mb-1">Q{i + 1}: {turn.question}</p>
-                                <p className="text-xs text-gray-500 italic mb-2">Your answer: "{turn.answer}"</p>
+                                <p className="text-xs font-semibold text-gray-600 mb-1">
+                                    Q{i + 1}: {turn.question_display || turn.question}
+                                </p>
+                                <p className="text-xs text-gray-500 italic mb-2">
+                                    Your answer: "{turn.answer_display || turn.answer}"
+                                </p>
                                 {turn.evaluation && (
                                     <div className="space-y-1">
                                         <div className="flex items-center gap-2">
@@ -117,14 +122,20 @@ function ResultScreen({ result, courseTitle, conversation, onDone }) {
                                                 </span>
                                             )}
                                         </div>
-                                        {turn.evaluation.feedback && (
-                                            <p className="text-xs text-gray-600 mt-1">{turn.evaluation.feedback}</p>
+                                        {(turn.evaluation.feedback_display || turn.evaluation.feedback) && (
+                                            <p className="text-xs text-gray-600 mt-1">
+                                                {turn.evaluation.feedback_display || turn.evaluation.feedback}
+                                            </p>
                                         )}
-                                        {turn.evaluation.what_correct && (
-                                            <p className="text-xs text-green-700">✓ {turn.evaluation.what_correct}</p>
+                                        {(turn.evaluation.what_correct_display || turn.evaluation.what_correct) && (
+                                            <p className="text-xs text-green-700">
+                                                ✓ {turn.evaluation.what_correct_display || turn.evaluation.what_correct}
+                                            </p>
                                         )}
-                                        {turn.evaluation.what_missed && (
-                                            <p className="text-xs text-amber-700">△ {turn.evaluation.what_missed}</p>
+                                        {(turn.evaluation.what_missed_display || turn.evaluation.what_missed) && (
+                                            <p className="text-xs text-amber-700">
+                                                △ {turn.evaluation.what_missed_display || turn.evaluation.what_missed}
+                                            </p>
                                         )}
                                     </div>
                                 )}
@@ -145,7 +156,10 @@ export default function VoiceTest() {
     const qc = useQueryClient()
     const [searchParams] = useSearchParams()
     const lessonId = searchParams.get('lesson_id')
-    const { speak, startListening, stopListening, getTranscript, isListening, isSpeaking, liveTranscript, supported } = useVoiceSpeech()
+    const language = searchParams.get('language') === 'hi' ? 'hi' : 'en'
+    const speechLanguage = language === 'hi' ? 'hi-IN' : 'en-US'
+    const { speak, startListening, stopListening, getTranscript, getDisplayTranscript, unlockAudio, isListening, isTranscribing, liveTranscript, recordingMs, supported, micError } = useVoiceSpeech({ language: speechLanguage })
+    const [currentAnswerDisplay, setCurrentAnswerDisplay] = useState('')
 
     const [phase, setPhase] = useState('loading')
     const [countdown, setCountdown] = useState(THINK_SECONDS)
@@ -179,31 +193,40 @@ export default function VoiceTest() {
     useEffect(() => () => clearInterval(countdownTimerRef.current), [])
 
     const settleCapturedAnswer = useCallback(async (candidate, reason) => {
-        await new Promise(resolve => setTimeout(resolve, 250))
-        const captured = getTranscript() || liveRef.current || candidate || ''
+        await new Promise(resolve => setTimeout(resolve, 200))
+        // Prefer canonical STT text for scoring — never use display/live status text.
+        const captured = [candidate, getTranscript()]
+            .map((text) => (text || '').trim())
+            .find((text) => text) || ''
         console.log('[voice-test:settled_capture]', {
             questionIndex: currentQRef.current,
             reason,
             candidateLength: candidate?.length || 0,
-            liveLength: liveRef.current?.length || 0,
+            displayLength: getDisplayTranscript()?.length || 0,
             capturedLength: captured.length,
             preview: captured.slice(0, 160),
         })
-        return captured
-    }, [getTranscript])
+        return {
+            answer: captured,
+            answer_display: getDisplayTranscript() || captured,
+        }
+    }, [getDisplayTranscript, getTranscript])
 
     useEffect(() => {
         const init = async () => {
             try {
-                const res = await voiceTestAPI.start(courseId, lessonId)
+                const res = await voiceTestAPI.start(courseId, lessonId, language)
                 const { test_id, course_title, fallback_questions } = res.data
                 setCourseTitle(course_title)
                 setTestId(test_id)
                 testIdRef.current = test_id
                 const qs = (fallback_questions || []).map(q =>
                     typeof q === 'string'
-                        ? { question: q, expected_answer: '', key_points: [], is_objection: false }
-                        : q
+                        ? { question: q, question_display: q, expected_answer: '', key_points: [], is_objection: false }
+                        : {
+                            ...q,
+                            question_display: q.question_display || q.question,
+                        }
                 )
                 setQuestions(qs)
                 questionsRef.current = qs
@@ -214,7 +237,7 @@ export default function VoiceTest() {
             }
         }
         init()
-    }, [courseId, lessonId])
+    }, [courseId, lessonId, language])
 
     const startCountdownThenListen = useCallback((silenceCallback) => {
         clearInterval(countdownTimerRef.current)
@@ -232,7 +255,7 @@ export default function VoiceTest() {
                     questionIndex: currentQRef.current,
                     reason: 'countdown_complete',
                 })
-                startListening((transcript) => {
+                void startListening((transcript) => {
                     const cb = onSilenceRef.current
                     onSilenceRef.current = null
                     if (cb) cb(transcript || liveRef.current)
@@ -254,8 +277,8 @@ export default function VoiceTest() {
                 const captured = await settleCapturedAnswer(transcript, 'auto_silence')
                 console.log('[voice-test:auto_capture]', {
                     questionIndex: qIndex,
-                    length: captured?.length || 0,
-                    preview: captured?.slice?.(0, 120) || '',
+                    length: captured?.answer?.length || 0,
+                    preview: captured?.answer?.slice?.(0, 120) || '',
                 })
                 processAnswerRef.current(captured)
             })
@@ -265,7 +288,7 @@ export default function VoiceTest() {
     const askQuestionRef = useRef(askQuestion)
     useEffect(() => { askQuestionRef.current = askQuestion }, [askQuestion])
 
-    const processAnswer = useCallback(async (answer) => {
+    const processAnswer = useCallback(async (captured) => {
         if (isProcessingRef.current) return
         isProcessingRef.current = true
 
@@ -273,7 +296,11 @@ export default function VoiceTest() {
         const qs = questionsRef.current
         const questionObj = qs[qIndex] || {}
         const questionText = questionObj.question || questionObj.question_text || ''
-        const finalAnswer = answer || '(no response)'
+        const questionDisplay = questionObj.question_display || questionText
+        const finalAnswer = (typeof captured === 'string' ? captured : captured?.answer) || '(no response)'
+        const finalAnswerDisplay = (typeof captured === 'string'
+            ? captured
+            : (captured?.answer_display || captured?.answer)) || finalAnswer
 
         console.log('[voice-test:process_answer]', {
             questionIndex: qIndex,
@@ -284,16 +311,21 @@ export default function VoiceTest() {
         })
 
         setCurrentAnswer(finalAnswer)
+        setCurrentAnswerDisplay(finalAnswerDisplay)
         setPhase('evaluating')
 
         let evaluation = null
+        let displayAnswer = finalAnswerDisplay
         try {
             const evalRes = await voiceTestAPI.evaluateAnswer({
                 course_id: courseId,
                 question: questionObj,
                 user_answer: finalAnswer,
+                language,
             })
             evaluation = evalRes.data.evaluation
+            if (evalRes.data.display_answer) displayAnswer = evalRes.data.display_answer
+            setCurrentAnswerDisplay(displayAnswer)
         } catch (err) {
             console.warn('[voice-test:evaluation_failed]', {
                 message: err.message,
@@ -305,11 +337,18 @@ export default function VoiceTest() {
         setCurrentFeedback(evaluation)
         setPhase('feedback')
 
-        const turn = { question: questionText, answer: finalAnswer, evaluation }
+        const turn = {
+            question: questionText,
+            question_display: questionDisplay,
+            answer: finalAnswer,
+            answer_display: displayAnswer,
+            evaluation,
+        }
         const newConversation = [...conversationRef.current, turn]
         setConversation(newConversation)
         conversationRef.current = newConversation
 
+        // TTS uses canonical spoken_feedback (not display hinglish).
         const feedbackText = evaluation?.spoken_feedback || null
         if (feedbackText) {
             await new Promise(resolve => speakRef.current(feedbackText, resolve))
@@ -327,6 +366,7 @@ export default function VoiceTest() {
                     conversation: newConversation,
                     test_id: testIdRef.current,
                     lesson_id: lessonId,
+                    language,
                 })
                 setResult(res.data.result)
                 qc.invalidateQueries({ queryKey: ['course-lessons', courseId] })
@@ -350,14 +390,18 @@ export default function VoiceTest() {
         currentQRef.current = nextQ
         setCurrentFeedback(null)
         setCurrentAnswer('')
+        setCurrentAnswerDisplay('')
         askQuestionRef.current(nextQ)
         isProcessingRef.current = false
-    }, [courseId, lessonId, phase, qc])
+    }, [courseId, lessonId, language, phase, qc])
 
     const processAnswerRef = useRef(processAnswer)
     useEffect(() => { processAnswerRef.current = processAnswer }, [processAnswer])
 
-    const beginTest = useCallback(() => askQuestionRef.current(0), [])
+    const beginTest = useCallback(() => {
+        unlockAudio()
+        askQuestionRef.current(0)
+    }, [unlockAudio])
 
     const handleAnswerCountdown = useCallback(() => {
         if (isProcessingRef.current) return
@@ -367,8 +411,8 @@ export default function VoiceTest() {
             const captured = await settleCapturedAnswer(transcript, 'manual_countdown_silence')
             console.log('[voice-test:manual_countdown_capture]', {
                 questionIndex: currentQRef.current,
-                length: captured?.length || 0,
-                preview: captured?.slice?.(0, 120) || '',
+                length: captured?.answer?.length || 0,
+                preview: captured?.answer?.slice?.(0, 120) || '',
             })
             processAnswerRef.current(captured)
         }
@@ -376,7 +420,7 @@ export default function VoiceTest() {
             questionIndex: currentQRef.current,
             reason: 'answer_button',
         })
-        startListening((transcript) => {
+        void startListening((transcript) => {
             const cb = onSilenceRef.current
             onSilenceRef.current = null
             if (cb) cb(transcript || liveRef.current)
@@ -384,28 +428,36 @@ export default function VoiceTest() {
     }, [settleCapturedAnswer, startListening])
 
     const handleDoneAnswering = useCallback(async () => {
-        if (isProcessingRef.current) return
+        if (isProcessingRef.current || isTranscribing) return
         clearInterval(countdownTimerRef.current)
-        const stoppedTranscript = stopListening()
+        const stoppedTranscript = await stopListening()
         const captured = await settleCapturedAnswer(stoppedTranscript, 'done_button')
         console.log('[voice-test:done_capture]', {
             questionIndex: currentQRef.current,
-            length: captured?.length || 0,
-            preview: captured?.slice?.(0, 120) || '',
+            length: captured?.answer?.length || 0,
+            preview: captured?.answer?.slice?.(0, 120) || '',
         })
         processAnswerRef.current(captured)
-    }, [settleCapturedAnswer, stopListening])
+    }, [isTranscribing, settleCapturedAnswer, stopListening])
 
     const totalQuestions = questions.length || 5
     const currentQuestionObj = questions[currentQ] || {}
-    const currentQuestionText = currentQuestionObj.question || currentQuestionObj.question_text || ''
+    const currentQuestionText = currentQuestionObj.question_display
+        || currentQuestionObj.question
+        || currentQuestionObj.question_text
+        || ''
+    const feedbackDisplayText = currentFeedback?.feedback_display
+        || currentFeedback?.feedback
+        || currentFeedback?.spoken_feedback_display
+        || currentFeedback?.spoken_feedback
+    const answerDisplayText = currentAnswerDisplay || currentAnswer
 
     if (!supported) return (
         <div className="min-h-screen flex items-center justify-center p-6">
             <div className="bg-white rounded-3xl shadow-xl p-8 max-w-md text-center">
                 <AlertCircle size={40} className="mx-auto text-red-400 mb-3" />
                 <h2 className="font-bold text-gray-800 text-lg mb-2">Browser Not Supported</h2>
-                <p className="text-gray-500 text-sm">Voice tests require Chrome or Edge.</p>
+                <p className="text-gray-500 text-sm">Voice tests need microphone recording support. Use Chrome or Edge over HTTPS/localhost.</p>
             </div>
         </div>
     )
@@ -464,7 +516,8 @@ export default function VoiceTest() {
                         <div className="text-sm text-gray-500 space-y-2 mb-6 text-left bg-gray-50 rounded-2xl p-4">
                             <p>🎤 The AI will speak each question out loud</p>
                             <p>⏱️ You get <strong>{THINK_SECONDS} seconds</strong> to think before the mic opens</p>
-                            <p>💬 Speak your answer, then wait 3s or press Done</p>
+                            <p>💬 Speak your answer, then wait ~2s silence or press Done</p>
+                            <p>📝 Your voice is recorded and transcribed securely (works for Hindi/Hinglish)</p>
                             <p>⚡ You get <strong>instant feedback</strong> after every answer</p>
                         </div>
                         <p className="text-xs text-gray-400 mb-4">{totalQuestions} questions · Voice assessment</p>
@@ -511,30 +564,49 @@ export default function VoiceTest() {
                     </div>
                 )}
 
-                {phase === 'listening' && (
+                {(phase === 'listening' || isTranscribing) && (
                     <div className="bg-white rounded-3xl shadow-card p-5 border-2 border-green-200">
                         <div className="bg-brand-50 rounded-2xl p-3 mb-4">
                             <p className="text-xs text-brand-600 font-semibold mb-1">Question {currentQ + 1}</p>
                             <p className="text-sm text-gray-700">{currentQuestionText}</p>
                         </div>
                         <div className="flex items-center gap-3 mb-3">
-                            <div className="w-9 h-9 rounded-xl bg-green-500 flex items-center justify-center flex-shrink-0">
-                                <Mic size={16} className="text-white" />
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${isTranscribing ? 'bg-brand-500' : isListening ? 'bg-green-500' : 'bg-amber-500'}`}>
+                                {isTranscribing
+                                    ? <Loader2 size={16} className="text-white animate-spin" />
+                                    : <Mic size={16} className="text-white" />}
                             </div>
                             <div className="flex-1">
-                                <p className="text-xs font-semibold text-green-700">Listening…</p>
-                                <p className="text-xs text-green-600">Auto-stops after 3s silence</p>
+                                <p className={`text-xs font-semibold ${isTranscribing ? 'text-brand-700' : isListening ? 'text-green-700' : 'text-amber-700'}`}>
+                                    {isTranscribing ? 'Transcribing your answer…' : isListening ? 'Recording…' : 'Starting mic…'}
+                                </p>
+                                <p className={`text-xs ${isTranscribing ? 'text-brand-600' : isListening ? 'text-green-600' : 'text-amber-600'}`}>
+                                    {isTranscribing
+                                        ? 'Converting speech to text'
+                                        : isListening
+                                            ? language === 'hi'
+                                                ? `Hindi/Hinglish · speak clearly · ${(recordingMs / 1000).toFixed(1)}s`
+                                                : `Auto-stops after silence · ${(recordingMs / 1000).toFixed(1)}s`
+                                            : 'Allow microphone if prompted'}
+                                </p>
                             </div>
-                            <Waveform active={true} />
+                            <Waveform active={isListening && !isTranscribing} />
                         </div>
+                        {micError && (
+                            <div className="mb-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                                {micError}
+                            </div>
+                        )}
                         <div className="bg-gray-50 rounded-2xl p-3 min-h-[60px] mb-3">
                             <p className="text-sm text-gray-700 leading-relaxed">
                                 {liveTranscript || <span className="text-gray-300 italic">Start speaking…</span>}
                             </p>
                         </div>
-                        <button onClick={handleDoneAnswering}
-                            className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-green-500 hover:bg-green-600 text-white font-semibold text-sm transition-colors">
-                            <CheckCircle size={16} /> Done Answering
+                        <button
+                            onClick={handleDoneAnswering}
+                            disabled={isTranscribing}
+                            className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-green-500 hover:bg-green-600 disabled:opacity-60 text-white font-semibold text-sm transition-colors">
+                            <CheckCircle size={16} /> {isTranscribing ? 'Transcribing…' : 'Done Answering'}
                         </button>
                     </div>
                 )}
@@ -545,7 +617,7 @@ export default function VoiceTest() {
                             <Loader2 size={20} className="text-brand-500 animate-spin flex-shrink-0" />
                             <div>
                                 <p className="text-sm font-semibold text-gray-700">Evaluating your answer…</p>
-                                {currentAnswer && <p className="text-xs text-gray-400 mt-0.5 italic">"{currentAnswer.slice(0, 80)}{currentAnswer.length > 80 ? '…' : ''}"</p>}
+                                {answerDisplayText && <p className="text-xs text-gray-400 mt-0.5 italic">"{answerDisplayText.slice(0, 80)}{answerDisplayText.length > 80 ? '…' : ''}"</p>}
                             </div>
                         </div>
                     </div>
@@ -567,13 +639,17 @@ export default function VoiceTest() {
                             )}
                         </div>
                         <p className="text-sm text-gray-700 leading-relaxed mb-2">
-                            {currentFeedback.feedback || currentFeedback.spoken_feedback}
+                            {feedbackDisplayText}
                         </p>
-                        {currentFeedback.what_correct && (
-                            <p className="text-xs text-green-700 bg-green-100 rounded-xl px-3 py-1.5 mb-1">✓ {currentFeedback.what_correct}</p>
+                        {(currentFeedback.what_correct_display || currentFeedback.what_correct) && (
+                            <p className="text-xs text-green-700 bg-green-100 rounded-xl px-3 py-1.5 mb-1">
+                                ✓ {currentFeedback.what_correct_display || currentFeedback.what_correct}
+                            </p>
                         )}
-                        {currentFeedback.what_missed && (
-                            <p className="text-xs text-amber-700 bg-amber-100 rounded-xl px-3 py-1.5">△ {currentFeedback.what_missed}</p>
+                        {(currentFeedback.what_missed_display || currentFeedback.what_missed) && (
+                            <p className="text-xs text-amber-700 bg-amber-100 rounded-xl px-3 py-1.5">
+                                △ {currentFeedback.what_missed_display || currentFeedback.what_missed}
+                            </p>
                         )}
                         <p className="text-xs text-gray-400 mt-3 text-center animate-pulse">Preparing next question…</p>
                     </div>

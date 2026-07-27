@@ -198,12 +198,23 @@ export const analyticsAPI = {
 }
 
 export const voiceTestAPI = {
-  start: (courseId, lessonId) => api.get(`/voice-test/start/${courseId}`, {
-    params: lessonId ? { lesson_id: lessonId } : undefined,
+  start: (courseId, lessonId, language = 'en') => api.get(`/voice-test/start/${courseId}`, {
+    params: { ...(lessonId ? { lesson_id: lessonId } : {}), language },
   }),
   nextQuestion: (data) => api.post('/voice-test/next-question', data),
   evaluateAnswer: (data) => api.post('/voice-test/evaluate-answer', data),
   score: (data) => api.post('/voice-test/score', data),
+  speech: (data) => api.post('/voice-test/speech', data, { responseType: 'blob' }),
+  transcribe: (audioBlob, language = 'en') => {
+    const form = new FormData()
+    const extension = audioBlob?.type?.includes('mp4') ? 'mp4' : 'webm'
+    form.append('audio', audioBlob, `answer.${extension}`)
+    form.append('language', language)
+    return api.post('/voice-test/transcribe', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    })
+  },
 }
 
 export const whatsappAPI = {
