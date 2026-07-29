@@ -1,14 +1,36 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { coursesAPI, usersAPI } from '../../services/api'
+import { coursesAPI, usersAPI, categoriesAPI } from '../../services/api'
+import { useAuthStore } from '../../store/authStore'
 import { ChevronLeft, Save } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+const ROLEPLAY_TYPE_LABELS = {
+  auto: 'Let AI choose',
+  sales: 'Sales / Consultation',
+  technical_service: 'Technical service',
+  content: 'Content / Creative',
+  support: 'Customer support',
+  internal: 'Internal / Operations',
+}
+
+const getUserCategoryIds = (user) => {
+  if (user?.category_ids?.length) {
+    return user.category_ids.map((c) => (c?._id || c)?.toString()).filter(Boolean)
+  }
+  if (user?.category_id) {
+    return [(user.category_id._id || user.category_id).toString()]
+  }
+  return []
+}
 
 export default function CreateCourse() {
   const { id } = useParams()
   const navigate = useNavigate()
   const isEdit = !!id
+  const { user, hasAnyRole } = useAuthStore()
+  const isAdmin = hasAnyRole('admin')
 
   const [form, setForm] = useState({
     title: '',
@@ -16,6 +38,7 @@ export default function CreateCourse() {
     passing_score: 60,
     duration_hours: '',
     tags: '',
+    category_id: '',
     department_ids: [],
   })
   const [saving, setSaving] = useState(false)
@@ -31,6 +54,11 @@ export default function CreateCourse() {
     queryFn: () => usersAPI.getDepartments(),
   })
 
+  const { data: catsData } = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => categoriesAPI.getAll(),
+  })
+
   useEffect(() => {
     if (courseData?.data?.course) {
       const c = courseData.data.course
@@ -40,17 +68,37 @@ export default function CreateCourse() {
         passing_score: c.passing_score || 60,
         duration_hours: c.duration_hours || '',
         tags: c.tags?.join(', ') || '',
+        category_id: (c.category_id?._id || c.category_id || '').toString(),
         department_ids: c.department_ids?.map(d => d._id || d) || [],
       })
     }
   }, [courseData])
 
   const departments = deptsData?.data?.departments || []
+  const allCategories = catsData?.data?.categories || []
+  const trainerCatIds = useMemo(() => getUserCategoryIds(user), [user])
+
+  const categories = useMemo(() => {
+    if (isAdmin) return allCategories
+    if (!trainerCatIds.length) return []
+    return allCategories.filter((cat) => trainerCatIds.includes(cat._id.toString()))
+  }, [allCategories, isAdmin, trainerCatIds])
+
+  // Prefill single category for trainers who only have one
+  useEffect(() => {
+    if (isEdit || form.category_id || !categories.length) return
+    if (categories.length === 1) {
+      setForm((f) => ({ ...f, category_id: categories[0]._id }))
+    }
+  }, [categories, form.category_id, isEdit])
+
+  const selectedCategory = categories.find((c) => c._id === form.category_id)
   const set = (key, val) => setForm(f => ({ ...f, [key]: val }))
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!form.title.trim()) return toast.error('Title is required')
+    if (!form.category_id) return toast.error('Category is required')
     setSaving(true)
     try {
       const payload = {
@@ -98,6 +146,32 @@ export default function CreateCourse() {
             <textarea className="input-field min-h-[90px] resize-none"
               placeholder="What will trainees learn in this course?"
               value={form.description} onChange={e => set('description', e.target.value)} />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-gray-700 block mb-1.5">Category *</label>
+            <select
+              className="input-field"
+              value={form.category_id}
+              onChange={e => set('category_id', e.target.value)}
+              required
+              disabled={!categories.length}
+            >
+              <option value="">
+                {categories.length ? 'Select a category' : 'No categories available'}
+              </option>
+              {categories.map((cat) => (
+                <option key={cat._id} value={cat._id}>{cat.name}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 mt-1.5">
+              Role Play uses this category’s type
+              {selectedCategory
+                ? `: ${ROLEPLAY_TYPE_LABELS[selectedCategory.roleplay_type] || 'Let AI choose'}`
+                : '.'}
+            </p>
+            {!isAdmin && !trainerCatIds.length && (
+              <p className="text-xs text-red-500 mt-1">No category assigned to your account — contact admin.</p>
+            )}
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div>

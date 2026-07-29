@@ -16,6 +16,31 @@ const getUserCatIds = (user) => {
   return [];
 };
 
+const userHasRole = (user, role) =>
+  user?.role === role || user?.roles?.some((r) => r === role);
+
+/** Resolve and validate category_id for create/update. Trainers may only use their assigned categories. */
+const resolveCourseCategoryId = ({ user, categoryId, required = true }) => {
+  const selected = categoryId ? getRawId(categoryId) : null;
+
+  if (!selected) {
+    if (required) return { error: { status: 400, message: 'Category is required' } };
+    return { categoryId: null };
+  }
+
+  if (userHasRole(user, 'trainer') && !userHasRole(user, 'admin')) {
+    const catIds = getUserCatIds(user);
+    if (!catIds.length) {
+      return { error: { status: 403, message: 'You have no category assigned — contact admin' } };
+    }
+    if (!catIds.includes(selected)) {
+      return { error: { status: 403, message: 'You can only assign a category that belongs to you' } };
+    }
+  }
+
+  return { categoryId: selected };
+};
+
 // GET /api/courses
 router.get('/', authenticate, async (req, res, next) => {
   try {
@@ -48,7 +73,7 @@ router.get('/:id', authenticate, async (req, res, next) => {
   try {
     const course = await Course.findById(req.params.id)
       .populate('created_by', 'name email')
-      .populate({ path: 'category_id', select: 'name', strictPopulate: false });
+      .populate({ path: 'category_id', select: 'name roleplay_type', strictPopulate: false });
 
     if (!course) return res.status(404).json({ success: false, message: 'Course not found' });
 
@@ -66,14 +91,14 @@ router.get('/:id', authenticate, async (req, res, next) => {
 // POST /api/courses
 router.post('/', authenticate, authorize('admin', 'trainer'), async (req, res, next) => {
   try {
-    const { title, description, video_url, requires_voice_test, passing_score, duration_hours, tags, department_ids } = req.body;
+    const { title, description, video_url, requires_voice_test, passing_score, duration_hours, tags, department_ids, category_id } = req.body;
 
     if (!title) return res.status(400).json({ success: false, message: 'Title is required' });
 
-    const catIds = getUserCatIds(req.user);
-
-    if (req.user.role === 'trainer' && !catIds.length)
-      return res.status(403).json({ success: false, message: 'You have no category assigned — contact admin' });
+    const resolved = resolveCourseCategoryId({ user: req.user, categoryId: category_id, required: true });
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ success: false, message: resolved.error.message });
+    }
 
     const video_source = video_url ? detectVideoSource(video_url) : 'unknown';
 
@@ -85,11 +110,11 @@ router.post('/', authenticate, authorize('admin', 'trainer'), async (req, res, n
       tags: tags || [],
       department_ids: department_ids || [],
       created_by: req.user._id,
-      // Trainer: stamp their primary category. Admin: use provided or null
-      category_id: req.user.role === 'trainer' ? catIds[0] : (req.body.category_id || null),
+      // Explicit category from create form (drives Role Play type via category.roleplay_type)
+      category_id: resolved.categoryId,
     });
 
-    await course.populate({ path: 'category_id', select: 'name', strictPopulate: false });
+    await course.populate({ path: 'category_id', select: 'name roleplay_type', strictPopulate: false });
     res.status(201).json({ success: true, course });
   } catch (err) { next(err); }
 });
@@ -100,13 +125,13 @@ router.put('/:id', authenticate, authorize('admin', 'trainer'), async (req, res,
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ success: false, message: 'Course not found' });
 
-    if (req.user.role === 'trainer') {
+    if (userHasRole(req.user, 'trainer') && !userHasRole(req.user, 'admin')) {
       const catIds = getUserCatIds(req.user);
       if (!catIds.includes(getRawId(course.category_id)))
         return res.status(403).json({ success: false, message: 'Not your category' });
     }
 
-    const { title, description, video_url, requires_voice_test, passing_score, duration_hours, tags, department_ids } = req.body;
+    const { title, description, video_url, requires_voice_test, passing_score, duration_hours, tags, department_ids, category_id } = req.body;
 
     if (video_url && video_url !== course.video_url) {
       course.video_url = video_url;
@@ -121,8 +146,16 @@ router.put('/:id', authenticate, authorize('admin', 'trainer'), async (req, res,
     if (duration_hours !== undefined) course.duration_hours = duration_hours;
     if (tags !== undefined) course.tags = tags;
     if (department_ids !== undefined) course.department_ids = department_ids;
+    if (category_id !== undefined) {
+      const resolved = resolveCourseCategoryId({ user: req.user, categoryId: category_id, required: true });
+      if (resolved.error) {
+        return res.status(resolved.error.status).json({ success: false, message: resolved.error.message });
+      }
+      course.category_id = resolved.categoryId;
+    }
 
     await course.save();
+    await course.populate({ path: 'category_id', select: 'name roleplay_type', strictPopulate: false });
     res.json({ success: true, course });
   } catch (err) { next(err); }
 });
@@ -133,7 +166,7 @@ router.delete('/:id', authenticate, authorize('admin', 'trainer'), async (req, r
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ success: false, message: 'Course not found' });
 
-    if (req.user.role === 'trainer') {
+    if (userHasRole(req.user, 'trainer') && !userHasRole(req.user, 'admin')) {
       const catIds = getUserCatIds(req.user);
       if (!catIds.includes(getRawId(course.category_id)))
         return res.status(403).json({ success: false, message: 'Not your category' });
