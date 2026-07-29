@@ -16,7 +16,7 @@ const NAV = {
     { to: '/admin/courses', label: 'Courses', icon: BookOpen },
     { to: '/admin/progress', label: 'Student Progress', icon: TrendingUp },
     { to: '/admin/history', label: 'Student History', icon: History },
-    { to: '/admin/categories', label: 'Roles', icon: Tag },
+    { to: '/admin/categories', label: 'Categories', icon: Tag },
     { to: '/admin/ai-settings', label: 'AI Settings', icon: Settings },
     { to: '/admin/whatsapp', label: 'WhatsApp Settings', icon: MessageCircle },
   ],
