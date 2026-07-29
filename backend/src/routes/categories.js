@@ -3,6 +3,12 @@ const Category = require('../models/Category');
 const User = require('../models/User');
 const Course = require('../models/Course');
 const { authenticate, authorize } = require('../middleware/auth');
+const {
+    ROLEPLAY_TYPES,
+    DEFAULT_ROLEPLAY_TYPE,
+    isValidRolePlayType,
+    normalizeRolePlayType,
+} = require('../constants/rolePlayTypes');
 
 // Count users in a category — checks both category_ids array and legacy category_id
 const countInCategory = (catId, role) => User.countDocuments({
@@ -21,23 +27,33 @@ router.get('/', authenticate, async (req, res, next) => {
                     countInCategory(cat._id, 'trainer'),
                     countInCategory(cat._id, 'trainee'),
                 ]);
-                return { ...cat.toObject(), trainer_count, trainee_count };
+                const obj = cat.toObject();
+                return {
+                    ...obj,
+                    roleplay_type: normalizeRolePlayType(obj.roleplay_type),
+                    trainer_count,
+                    trainee_count,
+                };
             })
         );
-        res.json({ success: true, categories: enriched });
+        res.json({ success: true, categories: enriched, roleplay_types: ROLEPLAY_TYPES });
     } catch (err) { next(err); }
 });
 
 // POST /api/categories
 router.post('/', authenticate, authorize('admin'), async (req, res, next) => {
     try {
-        const { name, description } = req.body;
+        const { name, description, roleplay_type } = req.body;
         if (!name) return res.status(400).json({ success: false, message: 'Name is required' });
+        if (roleplay_type != null && roleplay_type !== '' && !isValidRolePlayType(roleplay_type)) {
+            return res.status(400).json({ success: false, message: 'Invalid role play type' });
+        }
         const exists = await Category.findOne({ name: name.trim() });
         if (exists) return res.status(400).json({ success: false, message: 'Category already exists' });
         const category = await Category.create({
             name: name.trim(),
             description: description?.trim() || '',
+            roleplay_type: normalizeRolePlayType(roleplay_type || DEFAULT_ROLEPLAY_TYPE),
             created_by: req.user._id,
         });
         res.status(201).json({
@@ -87,10 +103,13 @@ router.get('/:id/members', authenticate, authorize('admin'), async (req, res, ne
 // PUT /api/categories/:id
 router.put('/:id', authenticate, authorize('admin'), async (req, res, next) => {
     try {
-        const { name, description, is_active } = req.body;
+        const { name, description, is_active, roleplay_type } = req.body;
         if (name) {
             const exists = await Category.findOne({ name: name.trim(), _id: { $ne: req.params.id } });
             if (exists) return res.status(400).json({ success: false, message: 'Category name already exists' });
+        }
+        if (roleplay_type != null && roleplay_type !== '' && !isValidRolePlayType(roleplay_type)) {
+            return res.status(400).json({ success: false, message: 'Invalid role play type' });
         }
         const category = await Category.findByIdAndUpdate(
             req.params.id,
@@ -98,6 +117,9 @@ router.put('/:id', authenticate, authorize('admin'), async (req, res, next) => {
                 ...(name && { name: name.trim() }),
                 ...(description !== undefined && { description }),
                 ...(is_active !== undefined && { is_active }),
+                ...(roleplay_type !== undefined && {
+                    roleplay_type: normalizeRolePlayType(roleplay_type || DEFAULT_ROLEPLAY_TYPE),
+                }),
             },
             { new: true, runValidators: true }
         );
@@ -106,7 +128,15 @@ router.put('/:id', authenticate, authorize('admin'), async (req, res, next) => {
             countInCategory(category._id, 'trainer'),
             countInCategory(category._id, 'trainee'),
         ]);
-        res.json({ success: true, category: { ...category.toObject(), trainer_count, trainee_count } });
+        res.json({
+            success: true,
+            category: {
+                ...category.toObject(),
+                roleplay_type: normalizeRolePlayType(category.roleplay_type),
+                trainer_count,
+                trainee_count,
+            },
+        });
     } catch (err) { next(err); }
 });
 

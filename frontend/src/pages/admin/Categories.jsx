@@ -3,15 +3,28 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { categoriesAPI } from '../../services/api'
 import {
     Tag, Plus, Pencil, Trash2, X, Users, Briefcase,
-    GraduationCap, CheckCircle, AlertTriangle
+    GraduationCap, CheckCircle, AlertTriangle, MessageSquare
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+const ROLEPLAY_TYPE_OPTIONS = [
+    { value: 'auto', label: 'Let AI choose' },
+    { value: 'sales', label: 'Sales / Consultation' },
+    { value: 'technical_service', label: 'Technical service' },
+    { value: 'content', label: 'Content / Creative' },
+    { value: 'support', label: 'Customer support' },
+    { value: 'internal', label: 'Internal / Operations' },
+]
+
+const rolePlayTypeLabel = (value) =>
+    ROLEPLAY_TYPE_OPTIONS.find(o => o.value === value)?.label || 'Let AI choose'
 
 // ── Create / Edit Modal ──────────────────────────────────
 function CategoryModal({ existing, onClose, onSaved }) {
     const [form, setForm] = useState({
         name: existing?.name || '',
         description: existing?.description || '',
+        roleplay_type: existing?.roleplay_type || 'auto',
     })
     const [loading, setLoading] = useState(false)
     const isEdit = !!existing
@@ -70,6 +83,24 @@ function CategoryModal({ existing, onClose, onSaved }) {
                             value={form.description}
                             onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
                         />
+                    </div>
+                    <div>
+                        <label className="text-sm font-semibold text-gray-700 block mb-1">
+                            Role play type
+                        </label>
+                        <select
+                            className="input-field text-sm"
+                            value={form.roleplay_type}
+                            onChange={e => setForm(f => ({ ...f, roleplay_type: e.target.value }))}
+                        >
+                            {ROLEPLAY_TYPE_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                        </select>
+                        <p className="text-xs text-gray-400 mt-1.5">
+                            Controls how role-play scenarios are framed for courses in this category.
+                            Default is Let AI choose.
+                        </p>
                     </div>
                     <div className="flex gap-3 pt-2">
                         <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
@@ -311,6 +342,13 @@ export default function AdminCategories() {
                                         <Trash2 size={14} />
                                     </button>
                                 </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 px-3 py-2 bg-gray-50 rounded-xl text-xs text-gray-600">
+                                <MessageSquare size={12} className="text-brand-500 flex-shrink-0" />
+                                <span className="truncate">
+                                    Role play: <span className="font-semibold text-gray-800">{rolePlayTypeLabel(cat.roleplay_type)}</span>
+                                </span>
                             </div>
 
                             {/* Member counts */}
