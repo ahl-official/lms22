@@ -10,6 +10,54 @@ import toast from 'react-hot-toast'
 
 const MAX_ROLEPLAY_QUESTIONS = 5
 
+const ROLEPLAY_UI_LABELS = {
+    sales: {
+        counterpart: 'Customer',
+        personaTitle: 'Choose a customer persona',
+        questionTitle: 'Customer question',
+        minAnswersToast: 'Answer at least 2 customer questions before scoring',
+        historyFallback: 'Customer question',
+    },
+    technical_service: {
+        counterpart: 'Client',
+        personaTitle: 'Choose a client persona',
+        questionTitle: 'Client question',
+        minAnswersToast: 'Answer at least 2 client questions before scoring',
+        historyFallback: 'Client question',
+    },
+    content: {
+        counterpart: 'Stakeholder',
+        personaTitle: 'Choose a stakeholder persona',
+        questionTitle: 'Stakeholder question',
+        minAnswersToast: 'Answer at least 2 stakeholder questions before scoring',
+        historyFallback: 'Stakeholder question',
+    },
+    support: {
+        counterpart: 'Customer',
+        personaTitle: 'Choose a customer persona',
+        questionTitle: 'Customer question',
+        minAnswersToast: 'Answer at least 2 customer questions before scoring',
+        historyFallback: 'Customer question',
+    },
+    internal: {
+        counterpart: 'Colleague',
+        personaTitle: 'Choose a workplace persona',
+        questionTitle: 'Colleague question',
+        minAnswersToast: 'Answer at least 2 colleague questions before scoring',
+        historyFallback: 'Colleague question',
+    },
+    auto: {
+        counterpart: 'Counterpart',
+        personaTitle: 'Choose a persona',
+        questionTitle: 'Their question',
+        minAnswersToast: 'Answer at least 2 questions before scoring',
+        historyFallback: 'Question',
+    },
+}
+
+const getRolePlayUiLabels = (roleplayType) =>
+    ROLEPLAY_UI_LABELS[roleplayType] || ROLEPLAY_UI_LABELS.auto
+
 const speak = (text) => new Promise(resolve => {
     if (!text || typeof window === 'undefined' || !window.speechSynthesis) return resolve()
     window.speechSynthesis.cancel()
@@ -202,6 +250,7 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
     const [personas, setPersonas] = useState([])
     const [selectedPersonaKey, setSelectedPersonaKey] = useState('')
     const [personasLoading, setPersonasLoading] = useState(false)
+    const [roleplayType, setRoleplayType] = useState('auto')
     const [scenario, setScenario] = useState(null)
     const [conversation, setConversation] = useState([])
     const [phase, setPhase] = useState('idle')
@@ -212,6 +261,8 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
     const [latestFeedback, setLatestFeedback] = useState(null)
     const [latestTranscript, setLatestTranscript] = useState('')
     const conversationRef = useRef([])
+
+    const uiLabels = getRolePlayUiLabels(scenario?.roleplay_type || roleplayType)
 
     useEffect(() => setGateProgress(progress), [progress])
     useEffect(() => { conversationRef.current = conversation }, [conversation])
@@ -226,6 +277,7 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
                 if (!mounted) return
                 const nextPersonas = res.data.personas || []
                 setPersonas(nextPersonas)
+                setRoleplayType(res.data.roleplay_type || 'auto')
                 setSelectedPersonaKey(current => current || nextPersonas[0]?.key || '')
             })
             .catch(() => toast.error('Could not generate lesson personas'))
@@ -248,7 +300,7 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
         if (!scenario) return
         const userTurns = conversationOverride.filter(m => m.role === 'user').length
         if (userTurns < 2) {
-            toast.error('Answer at least 2 customer questions before scoring')
+            toast.error(getRolePlayUiLabels(scenario?.roleplay_type || roleplayType).minAnswersToast)
             return
         }
 
@@ -294,7 +346,7 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
         } finally {
             setLoading(false)
         }
-    }, [lesson._id, loading, onProgressUpdate, scenario, selectedPersonaKey])
+    }, [lesson._id, loading, onProgressUpdate, roleplayType, scenario, selectedPersonaKey])
 
     const startScenario = async () => {
         if (gateProgress?.exhausted && !gateProgress?.unlocked) {
@@ -394,7 +446,7 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
         return (
             <div className="space-y-4">
                 <div>
-                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Choose a customer persona</p>
+                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">{uiLabels.personaTitle}</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {personasLoading ? (
                             <div className="sm:col-span-2 p-4 rounded-xl border border-gray-200 bg-gray-50 flex items-center gap-2 text-sm text-gray-500">
@@ -473,7 +525,7 @@ export default function RolePlayPanel({ lesson, progress, onProgressUpdate }) {
                         <Volume2 size={17} className="text-white" />
                     </div>
                     <div className="flex-1">
-                        <p className="text-xs font-semibold text-brand-600 mb-1">Customer question</p>
+                        <p className="text-xs font-semibold text-brand-600 mb-1">{uiLabels.questionTitle}</p>
                         <p className="text-sm text-gray-800 leading-relaxed">{currentPrompt}</p>
                         <button
                             onClick={() => speak(currentPrompt)}

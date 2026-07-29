@@ -14,12 +14,21 @@ const relativeTime = (date) => {
 
 const roleplayPairs = (attempt) => {
   const pairs = []
+  const roleplayType = attempt.scenario?.roleplay_type || 'auto'
+  const fallbackQuestion = {
+    sales: 'Customer question',
+    technical_service: 'Client question',
+    content: 'Stakeholder question',
+    support: 'Customer question',
+    internal: 'Colleague question',
+    auto: 'Question',
+  }[roleplayType] || 'Question'
   let currentQuestion = attempt.scenario?.opening_line || ''
   for (const turn of attempt.conversation || []) {
     if (turn.role === 'character') currentQuestion = turn.content || currentQuestion
     if (turn.role === 'user') {
       pairs.push({
-        question: currentQuestion || 'Customer question',
+        question: currentQuestion || fallbackQuestion,
         answer: turn.content || '',
         feedback: turn.coaching?.tip || turn.coaching?.spoken_feedback || turn.coaching?.what_worked || null,
         score: turn.coaching?.score ?? null,
