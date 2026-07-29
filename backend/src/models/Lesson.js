@@ -66,6 +66,7 @@ const lessonSchema = new mongoose.Schema(
         },
         roleplay_personas: {
             personas: { type: mongoose.Schema.Types.Mixed, default: null },
+            roleplay_type: { type: String, default: null },
             generated_at: { type: Date, default: null },
         },
 
