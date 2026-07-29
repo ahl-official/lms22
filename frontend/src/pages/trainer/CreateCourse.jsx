@@ -39,6 +39,7 @@ export default function CreateCourse() {
     duration_hours: '',
     tags: '',
     category_id: '',
+    roleplay_notes: '',
     department_ids: [],
   })
   const [saving, setSaving] = useState(false)
@@ -69,6 +70,7 @@ export default function CreateCourse() {
         duration_hours: c.duration_hours || '',
         tags: c.tags?.join(', ') || '',
         category_id: (c.category_id?._id || c.category_id || '').toString(),
+        roleplay_notes: c.roleplay_notes || '',
         department_ids: c.department_ids?.map(d => d._id || d) || [],
       })
     }
@@ -172,6 +174,20 @@ export default function CreateCourse() {
             {!isAdmin && !trainerCatIds.length && (
               <p className="text-xs text-red-500 mt-1">No category assigned to your account — contact admin.</p>
             )}
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-gray-700 block mb-1.5">Role Play notes (optional)</label>
+            <textarea
+              className="input-field min-h-[90px] resize-none"
+              maxLength={2000}
+              placeholder="e.g. Focus on price objections for first-time clinic clients; keep tone warm and local."
+              value={form.roleplay_notes}
+              onChange={e => set('roleplay_notes', e.target.value)}
+            />
+            <p className="text-xs text-gray-500 mt-1.5">
+              Extra guidance for this course only. Category type still sets the Role Play mode.
+              {form.roleplay_notes?.length ? ` ${form.roleplay_notes.length}/2000` : ''}
+            </p>
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div>

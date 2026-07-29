@@ -16,6 +16,13 @@ const courseSchema = new mongoose.Schema({
     ref: 'Category',
     default: null,
   },
+  // Optional trainer guidance injected into Role Play prompts for this course only.
+  roleplay_notes: {
+    type: String,
+    trim: true,
+    default: '',
+    maxlength: 2000,
+  },
   department_ids: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Department',

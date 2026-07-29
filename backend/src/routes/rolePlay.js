@@ -64,7 +64,7 @@ const resolveRolePlayContext = async (lessonOrId) => {
         .select('title transcript course_id roleplay_personas transcript_status')
         .populate({
             path: 'course_id',
-            select: 'title category_id',
+            select: 'title category_id roleplay_notes',
             populate: { path: 'category_id', select: 'name roleplay_type' },
         })
 
@@ -73,13 +73,25 @@ const resolveRolePlayContext = async (lessonOrId) => {
     const course = lesson.course_id
     const category = course?.category_id
     const roleplayType = normalizeRolePlayType(category?.roleplay_type)
+    const roleplayNotes = (course?.roleplay_notes || '').toString().trim()
     const frame = getRolePlayFrame(roleplayType, {
         courseTitle: course?.title || '',
         categoryName: category?.name || '',
         lessonTitle: lesson.title || '',
     })
 
-    return { lesson, course, category, roleplayType, frame }
+    return { lesson, course, category, roleplayType, roleplayNotes, frame }
+}
+
+const formatRolePlayNotesBlock = (notes) => {
+    const trimmed = (notes || '').toString().trim()
+    if (!trimmed) return ''
+    return `
+━━ COURSE ROLE PLAY NOTES (follow when relevant) ━━
+"""
+${trimmed.slice(0, 2000)}
+"""
+Treat these as trainer guidance for this specific course. Prefer them when they clarify roles, tone, focus areas, or scenario shape — without ignoring the lesson transcript.`
 }
 
 const fallbackPersonas = (lessonTitle = 'this lesson', frame = null) => {
@@ -87,15 +99,16 @@ const fallbackPersonas = (lessonTitle = 'this lesson', frame = null) => {
     return resolved.fallback_personas(lessonTitle)
 }
 
-const generateLessonPersonas = async (lesson, frame) => {
+const generateLessonPersonas = async (lesson, frame, roleplayNotes = '') => {
     const f = frame || getRolePlayFrame('auto', { lessonTitle: lesson.title })
+    const notesBlock = formatRolePlayNotesBlock(roleplayNotes)
     const prompt = `Create roleplay counterpart personas from this lesson transcript.
 
 ROLEPLAY MODE: ${f.mode_label} (${f.roleplay_type})
 CONTEXT: ${f.context_line}
 TRAINEE ROLE: ${f.trainee_role}
 CHARACTER KIND: ${f.character_kind}
-
+${notesBlock}
 LESSON TITLE: "${lesson.title}"
 TRANSCRIPT:
 """
@@ -124,6 +137,7 @@ Rules:
 - The trainee is: ${f.trainee_role}.
 ${f.persona_rules}
 - Base every persona on the transcript's skills, facts, techniques, and realistic workplace talk for this mode.
+- If course role play notes are present, reflect them in persona situations and concerns.
 - Do not use generic preset categories like objection handling, demo, closing, or needs assessment.
 - Make each persona feel different and realistic.
 - Keep labels short and user-friendly.`
@@ -148,20 +162,23 @@ ${f.persona_rules}
     }
 }
 
-const ensureLessonPersonas = async (lesson, frame) => {
+const ensureLessonPersonas = async (lesson, frame, roleplayNotes = '') => {
+    const notesKey = (roleplayNotes || '').toString().trim()
     const cachedType = lesson.roleplay_personas?.roleplay_type
+    const cachedNotes = (lesson.roleplay_personas?.roleplay_notes || '').toString().trim()
     let personas = Array.isArray(lesson.roleplay_personas?.personas)
         ? lesson.roleplay_personas.personas
         : []
 
-    if (personas.length && cachedType === frame.roleplay_type) {
+    if (personas.length && cachedType === frame.roleplay_type && cachedNotes === notesKey) {
         return personas
     }
 
-    personas = await generateLessonPersonas(lesson, frame)
+    personas = await generateLessonPersonas(lesson, frame, notesKey)
     lesson.roleplay_personas = {
         personas,
         roleplay_type: frame.roleplay_type,
+        roleplay_notes: notesKey,
         generated_at: new Date(),
     }
     await lesson.save()
@@ -530,12 +547,12 @@ router.get('/personas/:lessonId', authenticate, async (req, res, next) => {
         const ctx = await resolveRolePlayContext(req.params.lessonId)
         if (!ctx) return res.status(404).json({ success: false, message: 'Lesson not found' })
 
-        const { lesson, frame, roleplayType } = ctx
+        const { lesson, frame, roleplayType, roleplayNotes } = ctx
         if (lesson.transcript_status !== 'ready' || !lesson.transcript) {
             return res.status(400).json({ success: false, message: 'Lesson transcript is required to generate personas.' })
         }
 
-        const personas = await ensureLessonPersonas(lesson, frame)
+        const personas = await ensureLessonPersonas(lesson, frame, roleplayNotes)
         res.json({
             success: true,
             personas,
@@ -562,7 +579,7 @@ router.post('/scenario', authenticate, async (req, res, next) => {
         const ctx = await resolveRolePlayContext(lesson_id)
         if (!ctx) return res.status(404).json({ success: false, message: 'Lesson not found' })
 
-        const { lesson, frame, roleplayType } = ctx
+        const { lesson, frame, roleplayType, roleplayNotes } = ctx
         if (!lesson.transcript) {
             return res.status(400).json({ success: false, message: 'Lesson has no transcript — add one to enable Role Playing.' })
         }
@@ -580,9 +597,10 @@ router.post('/scenario', authenticate, async (req, res, next) => {
 
         let cachedPersonas = Array.isArray(lesson.roleplay_personas?.personas) ? lesson.roleplay_personas.personas : []
         if (!persona) {
-            cachedPersonas = await ensureLessonPersonas(lesson, frame)
+            cachedPersonas = await ensureLessonPersonas(lesson, frame, roleplayNotes)
         }
         const selectedPersona = persona || cachedPersonas[0] || fallbackPersonas(lesson.title, frame)[0]
+        const notesBlock = formatRolePlayNotesBlock(roleplayNotes)
 
         const prompt = `You are designing a workplace role-play practice scenario for a trainee.
 
@@ -594,7 +612,7 @@ The TRAINEE is: ${frame.trainee_role}
 The character opens the conversation with a question or concern.
 The trainee must respond using knowledge from the lesson.
 ${frame.scenario_rules}
-
+${notesBlock}
 ━━ LESSON CONTENT ━━
 LESSON TITLE: "${lesson.title}"
 LESSON TRANSCRIPT:
@@ -622,6 +640,7 @@ RULES:
 - The situation must describe what the character is experiencing
 - The goal must describe what the trainee needs to achieve
 - All content must map directly to the lesson transcript — no generic scenarios
+- If course role play notes are present, apply them when shaping situation, opening_line, and goal
 ${SCENARIO_TYPE_HINTS[scenario_type] ? `- Scenario direction hint: ${SCENARIO_TYPE_HINTS[scenario_type]}` : ''}
 
 Return ONLY valid JSON, no markdown:
@@ -650,10 +669,11 @@ Return ONLY valid JSON, no markdown:
 })
 
 // ── Shared turn logic ─────────────────────────────────────────────────────────
-const processTurn = async ({ lessonTranscript, lessonTitle, scenario, conversation, userMessage, frame }) => {
+const processTurn = async ({ lessonTranscript, lessonTitle, scenario, conversation, userMessage, frame, roleplayNotes = '' }) => {
     const f = frame || getRolePlayFrame(scenario?.roleplay_type || 'auto', { lessonTitle })
     const traineeLabel = f.trainee_label
     const characterLabel = f.character_label
+    const notesBlock = formatRolePlayNotesBlock(roleplayNotes)
 
     const history = conversation
         .map(m => `${m.role === 'user' ? `Trainee (${traineeLabel})` : `${scenario.character_name} (${characterLabel})`}: ${m.content}`)
@@ -671,7 +691,7 @@ CONTEXT: ${f.context_line}
 YOU are: ${scenario.character_name} — ${characterLabel} (${scenario.character_role})
 The person you are talking to is: the TRAINEE, playing the role of ${f.trainee_role}
 ${f.turn_rules}
-
+${notesBlock}
 ━━ LESSON CONTEXT (what the trainee has studied) ━━
 LESSON: "${lessonTitle}"
 LESSON TEACHES: ${lessonSkill}
@@ -824,6 +844,7 @@ router.post('/turn', authenticate, async (req, res, next) => {
             conversation,
             userMessage: user_message,
             frame,
+            roleplayNotes: ctx?.roleplayNotes || '',
         })
 
         res.json({ success: true, character_reply: result.character_reply, coaching: result.coaching })
@@ -873,6 +894,7 @@ router.post('/turn-audio', authenticate, upload.single('audio'), async (req, res
             conversation,
             userMessage: transcription,
             frame,
+            roleplayNotes: ctx?.roleplayNotes || '',
         })
 
         res.json({
@@ -895,6 +917,7 @@ router.post('/summary', authenticate, async (req, res, next) => {
         const frame = ctx?.frame || getRolePlayFrame(scenario?.roleplay_type || 'auto', {
             lessonTitle: lesson?.title || '',
         })
+        const notesBlock = formatRolePlayNotesBlock(ctx?.roleplayNotes || '')
 
         const convoText = conversation
             .map(m => `${m.role === 'user' ? `Trainee (${frame.trainee_label})` : `${scenario?.character_name || frame.character_label}`}: ${m.content}`)
@@ -932,6 +955,7 @@ CONTEXT: ${frame.context_line}
 LESSON: "${lesson?.title || 'Training'}"
 LESSON TEACHES: ${lessonSkill}
 KEY POINTS: ${keyPoints}
+${notesBlock}
 LESSON TRANSCRIPT:
 """
 ${(lesson?.transcript || '').slice(0, 3000)}
@@ -948,6 +972,7 @@ ${convoText}
 ━━ EVALUATION ━━
 Evaluate the TRAINEE as ${frame.trainee_role} — did they answer correctly and confidently using what the lesson teaches?
 ${frame.turn_rules}
+If course role play notes are present, also judge whether the trainee followed that course-specific guidance when relevant.
 
 Ask yourself:
 - Did the trainee demonstrate the knowledge and techniques this lesson covers?

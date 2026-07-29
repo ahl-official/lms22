@@ -91,7 +91,7 @@ router.get('/:id', authenticate, async (req, res, next) => {
 // POST /api/courses
 router.post('/', authenticate, authorize('admin', 'trainer'), async (req, res, next) => {
   try {
-    const { title, description, video_url, requires_voice_test, passing_score, duration_hours, tags, department_ids, category_id } = req.body;
+    const { title, description, video_url, requires_voice_test, passing_score, duration_hours, tags, department_ids, category_id, roleplay_notes } = req.body;
 
     if (!title) return res.status(400).json({ success: false, message: 'Title is required' });
 
@@ -112,6 +112,7 @@ router.post('/', authenticate, authorize('admin', 'trainer'), async (req, res, n
       created_by: req.user._id,
       // Explicit category from create form (drives Role Play type via category.roleplay_type)
       category_id: resolved.categoryId,
+      roleplay_notes: typeof roleplay_notes === 'string' ? roleplay_notes.trim().slice(0, 2000) : '',
     });
 
     await course.populate({ path: 'category_id', select: 'name roleplay_type', strictPopulate: false });
@@ -131,7 +132,7 @@ router.put('/:id', authenticate, authorize('admin', 'trainer'), async (req, res,
         return res.status(403).json({ success: false, message: 'Not your category' });
     }
 
-    const { title, description, video_url, requires_voice_test, passing_score, duration_hours, tags, department_ids, category_id } = req.body;
+    const { title, description, video_url, requires_voice_test, passing_score, duration_hours, tags, department_ids, category_id, roleplay_notes } = req.body;
 
     if (video_url && video_url !== course.video_url) {
       course.video_url = video_url;
@@ -146,6 +147,11 @@ router.put('/:id', authenticate, authorize('admin', 'trainer'), async (req, res,
     if (duration_hours !== undefined) course.duration_hours = duration_hours;
     if (tags !== undefined) course.tags = tags;
     if (department_ids !== undefined) course.department_ids = department_ids;
+    if (roleplay_notes !== undefined) {
+      course.roleplay_notes = typeof roleplay_notes === 'string'
+        ? roleplay_notes.trim().slice(0, 2000)
+        : '';
+    }
     if (category_id !== undefined) {
       const resolved = resolveCourseCategoryId({ user: req.user, categoryId: category_id, required: true });
       if (resolved.error) {
