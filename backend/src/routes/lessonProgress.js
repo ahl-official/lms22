@@ -1,0 +1,227 @@
+// REPLACE backend/src/routes/lessonProgress.js
+// LessonProgress model is now populated — this replaces the existing route.
+
+const router = require('express').Router();
+const LessonProgress = require('../models/LessonProgress');
+const Lesson = require('../models/Lesson');
+const Module = require('../models/Module');
+const Enrollment = require('../models/Enrollment');
+const { authenticate, authorize } = require('../middleware/auth');
+const { recalculateEnrollmentProgress } = require('../services/courseProgressService');
+
+// ── POST /api/lesson-progress/unlock-chapters — admin/trainer open all modules
+router.post('/unlock-chapters', authenticate, authorize('admin', 'trainer'), async (req, res, next) => {
+  try {
+    const { trainee_id, course_id } = req.body;
+    if (!trainee_id || !course_id) {
+      return res.status(400).json({ success: false, message: 'trainee_id and course_id required' });
+    }
+
+    const lessons = await Lesson.find({ course_id, is_published: true })
+      .select('_id module_id course_id')
+      .lean();
+
+    if (!lessons.length) {
+      return res.json({ success: true, unlocked_count: 0, message: 'No published lessons' });
+    }
+
+    const now = new Date();
+    let upserted = 0;
+
+    for (const lesson of lessons) {
+      await LessonProgress.findOneAndUpdate(
+        { trainee_id, lesson_id: lesson._id },
+        {
+          $set: {
+            trainee_id,
+            lesson_id: lesson._id,
+            module_id: lesson.module_id,
+            course_id: lesson.course_id,
+            status: 'completed',
+            watch_percent: 100,
+            completed_at: now,
+          },
+          $setOnInsert: { started_at: now },
+        },
+        { upsert: true }
+      );
+      upserted += 1;
+    }
+
+    const courseProgress = await recalculateEnrollmentProgress({ traineeId: trainee_id, courseId: course_id });
+
+    res.json({
+      success: true,
+      unlocked_count: upserted,
+      course_progress: courseProgress,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /api/lesson-progress/complete ────────────────────────────────────────
+router.post('/complete', authenticate, authorize('trainee'), async (req, res, next) => {
+  try {
+    const { lesson_id, module_id, course_id, score } = req.body;
+    if (!lesson_id || !module_id || !course_id)
+      return res.status(400).json({ success: false, message: 'lesson_id, module_id, course_id required' });
+
+    // Upsert — idempotent
+    const progress = await LessonProgress.findOneAndUpdate(
+      { trainee_id: req.user._id, lesson_id },
+      {
+        $set: {
+          trainee_id: req.user._id,
+          lesson_id,
+          module_id,
+          course_id,
+          status: 'completed',
+          score: score ?? null,
+          completed_at: new Date(),
+          watch_percent: 100,
+        },
+        $setOnInsert: { started_at: new Date() },
+      },
+      { upsert: true, new: true }
+    );
+
+    // Check if ALL published lessons in this module are now complete
+    const [totalLessons, completedLessons] = await Promise.all([
+      Lesson.countDocuments({ module_id, is_published: true }),
+      LessonProgress.countDocuments({ trainee_id: req.user._id, module_id, status: 'completed' }),
+    ]);
+
+    const module_completed = totalLessons > 0 && completedLessons >= totalLessons;
+
+    const courseProgress = await recalculateEnrollmentProgress({ traineeId: req.user._id, courseId: course_id });
+
+    res.json({
+      success: true,
+      progress,
+      module_completed,
+      total_lessons: totalLessons,
+      completed_lessons: completedLessons,
+      course_progress: courseProgress,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── PUT /api/lesson-progress/watch ────────────────────────────────────────────
+// Called periodically as trainee watches a video (non-blocking)
+router.put('/watch', authenticate, authorize('trainee'), async (req, res, next) => {
+  try {
+    const { lesson_id, module_id, course_id, watch_percent } = req.body;
+    if (!lesson_id) return res.status(400).json({ success: false, message: 'lesson_id required' });
+
+    await LessonProgress.findOneAndUpdate(
+      { trainee_id: req.user._id, lesson_id },
+      {
+        $set: { watch_percent: Math.min(100, watch_percent || 0), course_id, module_id },
+        $setOnInsert: {
+          trainee_id: req.user._id,
+          lesson_id,
+          module_id,
+          course_id,
+          status: 'in_progress',
+          started_at: new Date(),
+        },
+      },
+      { upsert: true }
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /api/lesson-progress/my ────────────────────────────────────────────────
+router.get('/my', authenticate, authorize('trainee'), async (req, res, next) => {
+  try {
+    const items = await LessonProgress.find({ trainee_id: req.user._id })
+      .populate('course_id', 'title')
+      .populate('lesson_id', 'title duration_minutes')
+      .populate('module_id', 'title order')
+      .select('course_id lesson_id module_id status score completed_at watch_percent updatedAt')
+      .sort({ updatedAt: -1 });
+
+    res.json({ success: true, progress: items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /api/lesson-progress/course/:courseId ──────────────────────────────────
+router.get('/course/:courseId', authenticate, authorize('trainee'), async (req, res, next) => {
+  try {
+    const items = await LessonProgress.find({
+      trainee_id: req.user._id,
+      course_id: req.params.courseId,
+    })
+      .populate('lesson_id', 'title duration_minutes')
+      .populate('module_id', 'title order')
+      .select('lesson_id module_id status score completed_at watch_percent updatedAt');
+
+    res.json({ success: true, progress: items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /api/lesson-progress/trainee/:traineeId/course/:courseId ──────────────
+router.get('/trainee/:traineeId/course/:courseId', authenticate, authorize('admin', 'trainer'), async (req, res, next) => {
+  try {
+    const items = await LessonProgress.find({
+      trainee_id: req.params.traineeId,
+      course_id: req.params.courseId,
+    })
+      .populate('lesson_id', 'title duration_minutes')
+      .populate('module_id', 'title order')
+      .select('lesson_id module_id status score completed_at watch_percent');
+
+    const byModule = {};
+    for (const item of items) {
+      const mid = item.module_id?._id?.toString() || item.module_id?.toString();
+      if (!byModule[mid]) {
+        byModule[mid] = {
+          module_id: item.module_id?._id || item.module_id,
+          module_title: item.module_id?.title || '—',
+          module_order: item.module_id?.order ?? 0,
+          lessons: [],
+        };
+      }
+      byModule[mid].lessons.push({
+        lesson_id: item.lesson_id?._id || item.lesson_id,
+        title: item.lesson_id?.title || '—',
+        status: item.status,
+        score: item.score,
+        watch_percent: item.watch_percent,
+        completed_at: item.completed_at,
+      });
+    }
+
+    const grouped = Object.values(byModule).sort((a, b) => a.module_order - b.module_order);
+    res.json({ success: true, progress: items, grouped });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /api/lesson-progress/module/:moduleId ──────────────────────────────────
+router.get('/module/:moduleId', authenticate, authorize('admin', 'trainer'), async (req, res, next) => {
+  try {
+    const items = await LessonProgress.find({ module_id: req.params.moduleId })
+      .populate('trainee_id', 'name email')
+      .populate('lesson_id', 'title')
+      .select('trainee_id lesson_id status score completed_at watch_percent');
+
+    res.json({ success: true, progress: items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+module.exports = router;
