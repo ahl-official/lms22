@@ -421,8 +421,366 @@ const courseReportFilename = (report) => {
   return `${slug}-detailed-report.pdf`;
 };
 
+// ── Bulk report: all enrolled students for a course ───────────────────────────
+const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
+  const [course, modules, lessons, enrollments] = await Promise.all([
+    Course.findById(courseId).select('title passing_score').lean(),
+    Module.find({ course_id: courseId, is_published: true }).select('_id title order').sort({ order: 1 }).lean(),
+    Lesson.find({ course_id: courseId, is_published: true }).select('_id title module_id order').sort({ order: 1 }).lean(),
+    Enrollment.find({ course_id: courseId })
+      .populate('trainee_id', 'name email phone')
+      .sort({ createdAt: 1 })
+      .lean(),
+  ]);
+
+  if (!course) {
+    const err = new Error('Course not found'); err.status = 404; throw err;
+  }
+  if (!enrollments.length) {
+    const err = new Error('No students enrolled in this course'); err.status = 404; throw err;
+  }
+
+  const moduleIds = modules.map((m) => m._id);
+  const traineeIds = enrollments.map((e) => e.trainee_id?._id || e.trainee_id).filter(Boolean);
+
+  // Batch-fetch all data for the course in one round trip per collection
+  const [allAttempts, allRolePlay, allLessonProgress] = await Promise.all([
+    Attempt.find({ course_id: courseId, trainee_id: { $in: traineeIds }, status: 'scored' })
+      .populate({ path: 'test_id', select: 'title passing_score module_id lesson_id' })
+      .sort({ submitted_at: 1 })
+      .lean(),
+    RolePlayAttempt.find({ course_id: courseId, trainee_id: { $in: traineeIds } })
+      .populate('lesson_id', 'title')
+      .populate('module_id', 'title')
+      .sort({ submitted_at: 1 })
+      .lean(),
+    LessonProgress.find({ course_id: courseId, trainee_id: { $in: traineeIds } })
+      .populate('lesson_id', 'title')
+      .lean(),
+  ]);
+
+  // Group by trainee
+  const attemptsByTrainee = {};
+  for (const a of allAttempts) {
+    const tid = a.trainee_id.toString();
+    (attemptsByTrainee[tid] = attemptsByTrainee[tid] || []).push(a);
+  }
+  const rolePlayByTrainee = {};
+  for (const r of allRolePlay) {
+    const tid = r.trainee_id.toString();
+    (rolePlayByTrainee[tid] = rolePlayByTrainee[tid] || []).push(r);
+  }
+  const lessonProgressByTrainee = {};
+  for (const lp of allLessonProgress) {
+    const tid = lp.trainee_id.toString();
+    (lessonProgressByTrainee[tid] = lessonProgressByTrainee[tid] || []).push(lp);
+  }
+
+  // Build per-student data
+  const students = [];
+  for (const enrollment of enrollments) {
+    const trainee = enrollment.trainee_id;
+    if (!trainee?._id) continue;
+    const tid = trainee._id.toString();
+
+    const snapshot = await getModuleCompletionSnapshot({ traineeId: trainee._id, moduleIds });
+    const totalLessons = lessons.length;
+    const completedLessonIds = snapshot.completedLessonIds || new Set();
+    const completedLessons = lessons.filter((l) => completedLessonIds.has(l._id.toString())).length;
+    const completedModules = modules.filter((mod) => {
+      const key = mod._id.toString();
+      return (snapshot.totalByModule[key] || 0) === 0 || (snapshot.completedByModule[key] || 0) >= (snapshot.totalByModule[key] || 0);
+    }).length;
+    const progress = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : (enrollment.progress || 0);
+
+    const attempts = attemptsByTrainee[tid] || [];
+    const rolePlayAttempts = rolePlayByTrainee[tid] || [];
+    const lessonProgress = lessonProgressByTrainee[tid] || [];
+
+    const assessmentScores = attempts.map((a) => a.score).filter((s) => s != null);
+    const rolePlayScores = rolePlayAttempts.map((a) => a.score).filter((s) => s != null);
+
+    // Assessment rounds (summary only)
+    const assessmentRoundByTest = {};
+    const assessmentRounds = attempts.map((attempt) => {
+      const testKey = attempt.test_id?._id?.toString() || 'unknown';
+      assessmentRoundByTest[testKey] = (assessmentRoundByTest[testKey] || 0) + 1;
+      return {
+        round: assessmentRoundByTest[testKey],
+        testTitle: attempt.test_id?.title || 'Assessment',
+        score: attempt.score,
+        passingScore: attempt.passing_score || attempt.test_id?.passing_score || 60,
+        passed: attempt.score != null ? attempt.score >= (attempt.passing_score || attempt.test_id?.passing_score || 60) : false,
+        submittedAt: attempt.submitted_at,
+        feedback: attempt.ai_feedback || null,
+        rubric: attempt.ai_rubric_breakdown || null,
+      };
+    });
+
+    // Role play rounds (summary only)
+    const rolePlayRoundByLesson = {};
+    const rolePlayRounds = rolePlayAttempts.map((attempt) => {
+      const lessonKey = attempt.lesson_id?._id?.toString() || 'unknown';
+      rolePlayRoundByLesson[lessonKey] = (rolePlayRoundByLesson[lessonKey] || 0) + 1;
+      return {
+        round: attempt.attempt_number || rolePlayRoundByLesson[lessonKey],
+        lessonTitle: attempt.lesson_id?.title || 'Role Play',
+        moduleTitle: attempt.module_id?.title || null,
+        score: attempt.score,
+        grade: attempt.grade,
+        passed: !!attempt.passed,
+        submittedAt: attempt.submitted_at,
+        summary: attempt.summary?.summary || attempt.summary?.summary_display || null,
+        strengths: attempt.summary?.strengths_display || attempt.summary?.strengths || [],
+        improvements: attempt.summary?.improvements || [],
+        recommendedFocus: attempt.summary?.recommended_focus_display || attempt.summary?.recommended_focus || null,
+      };
+    });
+
+    // Lesson rows
+    const progressByLessonId = {};
+    for (const item of lessonProgress) {
+      const key = item.lesson_id?._id?.toString() || item.lesson_id?.toString();
+      if (key) progressByLessonId[key] = item;
+    }
+    const lessonRows = lessons.map((lesson) => {
+      const key = lesson._id.toString();
+      const prog = progressByLessonId[key];
+      const completed = completedLessonIds.has(key) || prog?.status === 'completed';
+      return {
+        title: lesson.title,
+        status: completed ? 'completed' : (prog?.status || 'not_started'),
+        watchPercent: prog?.watch_percent ?? (completed ? 100 : 0),
+      };
+    });
+
+    students.push({
+      name: trainee.name || 'Unknown',
+      email: trainee.email || '',
+      phone: trainee.phone || null,
+      enrollmentStatus: enrollment.status || 'not_started',
+      enrolledAt: enrollment.createdAt || null,
+      completedAt: enrollment.completed_at || null,
+      progress,
+      totalLessons,
+      completedLessons,
+      totalModules: modules.length,
+      completedModules,
+      assessmentBest: assessmentScores.length ? Math.max(...assessmentScores) : null,
+      assessmentAvg: avg(assessmentScores),
+      assessmentCount: attempts.length,
+      rolePlayBest: rolePlayScores.length ? Math.max(...rolePlayScores) : null,
+      rolePlayAvg: avg(rolePlayScores),
+      rolePlayCount: rolePlayAttempts.length,
+      lessonRows,
+      assessmentRounds,
+      rolePlayRounds,
+    });
+  }
+
+  // ── PDF generation ─────────────────────────────────────────────────────────
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 48, bufferPages: true });
+    const chunks = [];
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const generatedAt = new Date();
+
+    // Cover header
+    doc.rect(0, 0, doc.page.width, 120).fill('#111827');
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(20)
+      .text('Enrolled Students Report', PAGE.left, 30, { width: PAGE.width });
+    doc.font('Helvetica').fontSize(11).fillColor('#94a3b8')
+      .text(course.title, PAGE.left, 58, { width: PAGE.width });
+    doc.font('Helvetica').fontSize(9).fillColor('#64748b')
+      .text(`Generated on ${formatDate(generatedAt)}  ·  ${students.length} student${students.length !== 1 ? 's' : ''} enrolled`, PAGE.left, 80, { width: PAGE.width });
+
+    doc.y = 144;
+
+    // ── Summary table ───────────────────────────────────────────────────────
+    sectionTitle(doc, 'Enrollment Summary', 80);
+    const colWidths = [160, 52, 52, 52, 52, 65, 66];
+    const headers = ['Student', 'Progress', 'Lessons', 'Assess', 'RP Best', 'Status', 'Completed'];
+    const tableX = PAGE.left;
+    const rowH = 22;
+
+    // Header row
+    ensureRoom(doc, rowH + 10);
+    doc.rect(tableX, doc.y, PAGE.width, rowH).fill('#f1f5f9');
+    let cx = tableX + 6;
+    headers.forEach((h, i) => {
+      doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(8)
+        .text(h.toUpperCase(), cx, doc.y + 7, { width: colWidths[i] - 4, align: i > 0 ? 'center' : 'left' });
+      cx += colWidths[i];
+    });
+    doc.y += rowH;
+
+    students.forEach((s, idx) => {
+      ensureRoom(doc, rowH);
+      if (idx % 2 === 0) doc.rect(tableX, doc.y, PAGE.width, rowH).fill('#f8fafc');
+      let x = tableX + 6;
+      const rowY = doc.y + 6;
+      const cols = [
+        s.name,
+        percent(s.progress),
+        `${s.completedLessons}/${s.totalLessons}`,
+        s.assessmentBest != null ? percent(s.assessmentBest) : '—',
+        s.rolePlayBest != null ? percent(s.rolePlayBest) : '—',
+        s.enrollmentStatus.replace('_', ' '),
+        s.completedAt ? formatDate(s.completedAt).split(',')[0] : '—',
+      ];
+      cols.forEach((val, i) => {
+        doc.fillColor('#111827').font('Helvetica').fontSize(9)
+          .text(String(val), x, rowY, { width: colWidths[i] - 4, align: i > 0 ? 'center' : 'left' });
+        x += colWidths[i];
+      });
+      doc.y += rowH;
+    });
+
+    doc.moveDown(1.2);
+
+    // ── Per-student detail sections ─────────────────────────────────────────
+    students.forEach((s) => {
+      ensureRoom(doc, 180);
+
+      // Student header bar
+      doc.rect(PAGE.left, doc.y, PAGE.width, 34).fill('#1e293b');
+      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(13)
+        .text(s.name, PAGE.left + 10, doc.y + 6, { width: 300 });
+      doc.fillColor('#94a3b8').font('Helvetica').fontSize(9)
+        .text(`${s.email}${s.phone ? '  ·  ' + s.phone : ''}`, PAGE.left + 10, doc.y + 22, { width: 300 });
+      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(10)
+        .text(`${percent(s.progress)} complete  ·  ${s.enrollmentStatus.replace('_', ' ')}`, PAGE.left + 315, doc.y + 6, { width: 180, align: 'right' });
+      doc.y += 46;
+
+      // Snapshot cards
+      const snapCards = [
+        ['Progress', percent(s.progress)],
+        ['Lessons', `${s.completedLessons}/${s.totalLessons}`],
+        ['Modules', `${s.completedModules}/${s.totalModules}`],
+        ['Assess best', percent(s.assessmentBest)],
+        ['RP best', percent(s.rolePlayBest)],
+        ['Assess attempts', String(s.assessmentCount)],
+      ];
+      ensureRoom(doc, 80);
+      const snapTop = doc.y + 6;
+      snapCards.forEach(([cardLabel, value], index) => {
+        const col = index % 3;
+        const row = Math.floor(index / 3);
+        const x = PAGE.left + col * 168;
+        const y = snapTop + row * 58;
+        doc.roundedRect(x, y, 156, 48, 5).fillAndStroke('#f8fafc', '#e5e7eb');
+        doc.fillColor('#111827').font('Helvetica-Bold').fontSize(13).text(value, x + 8, y + 8, { width: 140 });
+        doc.fillColor('#64748b').font('Helvetica').fontSize(7).text(cardLabel.toUpperCase(), x + 8, y + 30, { width: 140 });
+      });
+      doc.y = snapTop + (Math.ceil(snapCards.length / 3)) * 58 + 10;
+
+      // Lesson progress
+      if (s.lessonRows.length) {
+        sectionTitle(doc, 'Lesson Progress', 50);
+        s.lessonRows.forEach((lesson, index) => {
+          ensureRoom(doc, 22);
+          const completed = lesson.status === 'completed';
+          doc.fillColor(completed ? '#16a34a' : '#9ca3af').font('Helvetica').fontSize(9)
+            .text(`${index + 1}. ${lesson.title}`, PAGE.left, doc.y, { width: 370 });
+          doc.fillColor(completed ? '#16a34a' : '#9ca3af').font('Helvetica-Bold').fontSize(9)
+            .text(`${lesson.status}  ${percent(lesson.watchPercent)}`, PAGE.left + 370, doc.y - 12, { width: 129, align: 'right' });
+          doc.moveDown(0.3);
+        });
+        doc.moveDown(0.4);
+      }
+
+      // Assessment rounds
+      if (s.assessmentRounds.length) {
+        sectionTitle(doc, `Assessment Rounds (${s.assessmentRounds.length})`, 60);
+        s.assessmentRounds.forEach((round) => {
+          ensureRoom(doc, 100);
+          doc.fillColor('#111827').font('Helvetica-Bold').fontSize(10)
+            .text(`${round.testTitle} — Round ${round.round}`, PAGE.left, doc.y, { width: PAGE.width });
+          doc.moveDown(0.2);
+          doc.fillColor('#374151').font('Helvetica').fontSize(9)
+            .text([
+              `Score: ${percent(round.score)} (need ${percent(round.passingScore)})`,
+              `Result: ${round.passed ? 'Passed ✓' : 'Not passed'}`,
+              `Submitted: ${formatDate(round.submittedAt)}`,
+            ].join('  ·  '), PAGE.left, doc.y, { width: PAGE.width });
+          doc.moveDown(0.3);
+          if (round.feedback) {
+            label(doc, 'AI Feedback');
+            body(doc, round.feedback);
+            doc.moveDown(0.3);
+          }
+          if (round.rubric && typeof round.rubric === 'object') {
+            label(doc, 'Rubric');
+            body(doc, Object.entries(round.rubric).map(([k, v]) => `${k}: ${typeof v === 'number' ? Math.round(v) : v}`).join('  |  '));
+            doc.moveDown(0.3);
+          }
+          doc.moveDown(0.3);
+        });
+      }
+
+      // Role play rounds
+      if (s.rolePlayRounds.length) {
+        sectionTitle(doc, `Role Play Rounds (${s.rolePlayRounds.length})`, 60);
+        s.rolePlayRounds.forEach((round) => {
+          ensureRoom(doc, 100);
+          doc.fillColor('#111827').font('Helvetica-Bold').fontSize(10)
+            .text(`${round.lessonTitle} — Round ${round.round}`, PAGE.left, doc.y, { width: PAGE.width });
+          doc.moveDown(0.2);
+          doc.fillColor('#374151').font('Helvetica').fontSize(9)
+            .text([
+              `Score: ${percent(round.score)}`,
+              round.grade ? `Grade: ${round.grade}` : null,
+              `Result: ${round.passed ? 'Passed ✓' : 'Not passed'}`,
+              `Submitted: ${formatDate(round.submittedAt)}`,
+            ].filter(Boolean).join('  ·  '), PAGE.left, doc.y, { width: PAGE.width });
+          doc.moveDown(0.3);
+          if (round.summary) { label(doc, 'AI Summary'); body(doc, round.summary); doc.moveDown(0.25); }
+          if (round.strengths?.length) {
+            label(doc, 'Strengths');
+            round.strengths.forEach((item) => body(doc, `• ${item}`));
+            doc.moveDown(0.2);
+          }
+          if (round.improvements?.length) {
+            label(doc, 'Improvements');
+            round.improvements.forEach((item) => {
+              const tip = item.tip_display || item.tip || '';
+              const area = item.area_display || item.area || 'Area';
+              body(doc, `• ${area}: ${tip}`);
+            });
+            doc.moveDown(0.2);
+          }
+          if (round.recommendedFocus) { label(doc, 'Recommended Focus'); body(doc, round.recommendedFocus); doc.moveDown(0.2); }
+          doc.moveDown(0.4);
+        });
+      }
+
+      doc.moveDown(0.8);
+      // Divider between students
+      ensureRoom(doc, 20);
+      doc.moveTo(PAGE.left, doc.y).lineTo(PAGE.left + PAGE.width, doc.y).strokeColor('#e5e7eb').lineWidth(1).stroke();
+      doc.moveDown(0.8);
+    });
+
+    doc.end();
+  });
+};
+
+const bulkCourseReportFilename = (courseTitle) => {
+  const slug = (courseTitle || 'course')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  return `${slug}-all-students-report.pdf`;
+};
+
 module.exports = {
   buildCourseReportData,
   createCourseReportPdfBuffer,
   courseReportFilename,
+  buildBulkCourseReportPdfBuffer,
+  bulkCourseReportFilename,
 };

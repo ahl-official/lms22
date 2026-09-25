@@ -694,6 +694,37 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
   } catch (err) { next(err); }
 });
 
+// GET /api/analytics/admin/courses/:courseId/bulk-report.pdf
+// Admin-only PDF of all enrolled students for a course (regardless of completion status).
+router.get(
+  '/admin/courses/:courseId/bulk-report.pdf',
+  authenticate,
+  authorize('admin'),
+  async (req, res, next) => {
+    try {
+      const {
+        buildBulkCourseReportPdfBuffer,
+        bulkCourseReportFilename,
+      } = require('../services/courseReportService');
+
+      const Course = require('../models/Course');
+      const course = await Course.findById(req.params.courseId).select('title').lean();
+      if (!course) return res.status(404).json({ success: false, message: 'Course not found' });
+
+      const buffer = await buildBulkCourseReportPdfBuffer({ courseId: req.params.courseId });
+      const filename = bulkCourseReportFilename(course.title);
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', buffer.length);
+      return res.send(buffer);
+    } catch (err) {
+      if (err.status) return res.status(err.status).json({ success: false, message: err.message });
+      return next(err);
+    }
+  }
+);
+
 // GET /api/analytics/admin/student-progress/:traineeId/courses/:courseId/report.pdf
 // Admin-only detailed course report PDF (all rounds, AI feedback, completion).
 router.get(

@@ -199,6 +199,10 @@ export const analyticsAPI = {
     `/analytics/admin/student-progress/${traineeId}/courses/${courseId}/report.pdf`,
     { responseType: 'blob', timeout: 120000 },
   ),
+  downloadBulkCourseReport: (courseId) => api.get(
+    `/analytics/admin/courses/${courseId}/bulk-report.pdf`,
+    { responseType: 'blob', timeout: 180000 },
+  ),
 }
 
 export const voiceTestAPI = {

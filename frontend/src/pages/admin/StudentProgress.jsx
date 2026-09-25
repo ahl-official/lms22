@@ -358,12 +358,46 @@ export default function AdminStudentProgress() {
     const [courseFilter, setCourseFilter] = useState('all')
     const [debouncedSearch, setDebouncedSearch] = useState('')
     const debounceRef = useState(null)
+    const [bulkDownloading, setBulkDownloading] = useState(false)
 
     const handleSearch = useCallback((val) => {
         setSearch(val)
         clearTimeout(debounceRef[0])
         debounceRef[0] = setTimeout(() => setDebouncedSearch(val), 350)
     }, [debounceRef])
+
+    const handleBulkDownload = useCallback(async () => {
+        if (!courseFilter || courseFilter === 'all' || bulkDownloading) return
+        setBulkDownloading(true)
+        try {
+            const res = await analyticsAPI.downloadBulkCourseReport(courseFilter)
+            const blob = new Blob([res.data], { type: 'application/pdf' })
+            const url = window.URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            const courseTitle = courseOptions.find(c => c.id === courseFilter)?.title || 'course'
+            a.download = `${courseTitle.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 60)}-all-students-report.pdf`
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+            window.URL.revokeObjectURL(url)
+            toast.success('Bulk report downloaded')
+        } catch (err) {
+            let message = 'Failed to download bulk report'
+            try {
+                if (err.response?.data instanceof Blob) {
+                    const text = await err.response.data.text()
+                    const parsed = JSON.parse(text)
+                    if (parsed?.message) message = parsed.message
+                } else if (err.response?.data?.message) {
+                    message = err.response.data.message
+                }
+            } catch { /* keep default */ }
+            toast.error(message)
+        } finally {
+            setBulkDownloading(false)
+        }
+    }, [courseFilter, courseOptions, bulkDownloading])
 
     const { data: catData } = useQuery({
         queryKey: ['categories'],
@@ -562,6 +596,18 @@ export default function AdminStudentProgress() {
                         {course.title}
                     </button>
                 ))}
+                {courseFilter !== 'all' && (
+                    <button
+                        type="button"
+                        onClick={handleBulkDownload}
+                        disabled={bulkDownloading}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold border bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed ml-2"
+                        title="Download report for all enrolled students in this course"
+                    >
+                        {bulkDownloading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                        {bulkDownloading ? 'Generating…' : 'All Students Report'}
+                    </button>
+                )}
             </div>
 
             {/* Student list */}
