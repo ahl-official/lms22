@@ -195,6 +195,10 @@ export const analyticsAPI = {
   getHistory: (params) => api.get('/analytics/history', { params }),
   getStudentHistory: (params) => api.get('/analytics/student-history', { params }),
   getStudentProgress: (params) => api.get('/analytics/admin/student-progress', { params }),
+  downloadCourseReport: (traineeId, courseId) => api.get(
+    `/analytics/admin/student-progress/${traineeId}/courses/${courseId}/report.pdf`,
+    { responseType: 'blob', timeout: 120000 },
+  ),
 }
 
 export const voiceTestAPI = {

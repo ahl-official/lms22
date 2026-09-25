@@ -694,6 +694,40 @@ router.get('/admin/student-progress', authenticate, authorize('admin'), async (r
   } catch (err) { next(err); }
 });
 
+// GET /api/analytics/admin/student-progress/:traineeId/courses/:courseId/report.pdf
+// Admin-only detailed course report PDF (all rounds, AI feedback, completion).
+router.get(
+  '/admin/student-progress/:traineeId/courses/:courseId/report.pdf',
+  authenticate,
+  authorize('admin'),
+  async (req, res, next) => {
+    try {
+      const {
+        buildCourseReportData,
+        createCourseReportPdfBuffer,
+        courseReportFilename,
+      } = require('../services/courseReportService');
+
+      const report = await buildCourseReportData({
+        traineeId: req.params.traineeId,
+        courseId: req.params.courseId,
+      });
+      const buffer = await createCourseReportPdfBuffer(report);
+      const filename = courseReportFilename(report);
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', buffer.length);
+      return res.send(buffer);
+    } catch (err) {
+      if (err.status) {
+        return res.status(err.status).json({ success: false, message: err.message });
+      }
+      return next(err);
+    }
+  }
+);
+
 // GET /api/analytics/history
 // Recent roleplay, assessment, and lesson activity for admin/trainer dashboards.
 router.get('/history', authenticate, authorize('admin', 'trainer'), async (req, res, next) => {

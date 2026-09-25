@@ -8,13 +8,14 @@
 
 import { useState, useMemo, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import toast from 'react-hot-toast'
 import { analyticsAPI, categoriesAPI } from '../../services/api'
 import ScoreBadge from '../../components/ScoreBadge'
 import {
     Users, TrendingUp, Award, AlertTriangle, Search,
     ChevronDown, ChevronUp, CheckCircle,
     RefreshCw, Activity, XCircle, Minus, Mic, FileText,
-    BookOpen,
+    BookOpen, Download, Loader2,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
 
@@ -93,13 +94,15 @@ function StatTile({ icon: Icon, label, value, sub, iconClass }) {
 }
 
 // ── Course row (inside expanded student) ──────────────────────────────────────
-function CourseRow({ course }) {
+function CourseRow({ course, traineeId }) {
+    const [downloading, setDownloading] = useState(false)
     const assessment = course.assessment || {
         attempt_count: course.attempt_count || 0,
         best_score: course.best_score ?? null,
         last_attempt_at: course.last_attempt_at || null,
     }
     const roleplay = course.roleplay || { attempt_count: 0, best_score: null, locked_count: 0 }
+    const isComplete = course.status === 'completed'
     const progressColor =
         course.progress >= 80 ? 'bg-green-400' :
             course.progress >= 40 ? 'bg-brand-400' : 'bg-gray-300'
@@ -109,6 +112,39 @@ function CourseRow({ course }) {
         in_progress: { label: 'Active', cls: 'text-brand-700 bg-brand-50' },
         not_started: { label: 'Not yet', cls: 'text-gray-500 bg-gray-50' },
     }[course.status] || { label: course.status, cls: 'text-gray-500 bg-gray-50' }
+
+    const handleDownloadReport = async (e) => {
+        e.stopPropagation()
+        if (!traineeId || !course.course_id || downloading) return
+        setDownloading(true)
+        try {
+            const res = await analyticsAPI.downloadCourseReport(traineeId, course.course_id)
+            const blob = new Blob([res.data], { type: 'application/pdf' })
+            const url = window.URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `${String(course.course_title || 'course').replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 60)}-detailed-report.pdf`
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+            window.URL.revokeObjectURL(url)
+            toast.success('Course report downloaded')
+        } catch (err) {
+            let message = 'Failed to download course report'
+            try {
+                if (err.response?.data instanceof Blob) {
+                    const text = await err.response.data.text()
+                    const parsed = JSON.parse(text)
+                    if (parsed?.message) message = parsed.message
+                } else if (err.response?.data?.message) {
+                    message = err.response.data.message
+                }
+            } catch { /* keep default */ }
+            toast.error(message)
+        } finally {
+            setDownloading(false)
+        }
+    }
 
     return (
         <div className="flex items-center gap-4 p-3 rounded-xl bg-gray-50 border border-gray-100 text-sm">
@@ -173,6 +209,24 @@ function CourseRow({ course }) {
             <span className={`text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0 ${statusCfg.cls}`}>
                 {statusCfg.label}
             </span>
+
+            {/* Detailed report — completed courses only */}
+            <div className="w-24 flex-shrink-0 flex justify-end">
+                {isComplete ? (
+                    <button
+                        type="button"
+                        onClick={handleDownloadReport}
+                        disabled={downloading}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                        title="Download detailed course report"
+                    >
+                        {downloading ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                        Report
+                    </button>
+                ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                )}
+            </div>
         </div>
     )
 }
@@ -283,9 +337,10 @@ function StudentRow({ student }) {
                                 <p className="w-14 text-xs font-semibold text-gray-400 text-right uppercase tracking-wide flex-shrink-0">Best</p>
                                 <p className="w-24 text-xs font-semibold text-gray-400 text-center uppercase tracking-wide flex-shrink-0">Roleplay</p>
                                 <p className="w-20 text-xs font-semibold text-gray-400 text-right uppercase tracking-wide flex-shrink-0">Status</p>
+                                <p className="w-24 text-xs font-semibold text-gray-400 text-right uppercase tracking-wide flex-shrink-0">Report</p>
                             </div>
                             {student.courses.map(course => (
-                                <CourseRow key={course.course_id} course={course} />
+                                <CourseRow key={course.course_id} course={course} traineeId={student._id} />
                             ))}
                         </>
                     )}
