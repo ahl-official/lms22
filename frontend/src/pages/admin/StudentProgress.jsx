@@ -366,39 +366,6 @@ export default function AdminStudentProgress() {
         debounceRef[0] = setTimeout(() => setDebouncedSearch(val), 350)
     }, [debounceRef])
 
-    const handleBulkDownload = useCallback(async () => {
-        if (!courseFilter || courseFilter === 'all' || bulkDownloading) return
-        setBulkDownloading(true)
-        try {
-            const res = await analyticsAPI.downloadBulkCourseReport(courseFilter)
-            const blob = new Blob([res.data], { type: 'application/pdf' })
-            const url = window.URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url
-            const courseTitle = courseOptions.find(c => c.id === courseFilter)?.title || 'course'
-            a.download = `${courseTitle.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 60)}-all-students-report.pdf`
-            document.body.appendChild(a)
-            a.click()
-            a.remove()
-            window.URL.revokeObjectURL(url)
-            toast.success('Bulk report downloaded')
-        } catch (err) {
-            let message = 'Failed to download bulk report'
-            try {
-                if (err.response?.data instanceof Blob) {
-                    const text = await err.response.data.text()
-                    const parsed = JSON.parse(text)
-                    if (parsed?.message) message = parsed.message
-                } else if (err.response?.data?.message) {
-                    message = err.response.data.message
-                }
-            } catch { /* keep default */ }
-            toast.error(message)
-        } finally {
-            setBulkDownloading(false)
-        }
-    }, [courseFilter, courseOptions, bulkDownloading])
-
     const { data: catData } = useQuery({
         queryKey: ['categories'],
         queryFn: () => categoriesAPI.getAll(),
@@ -440,6 +407,39 @@ export default function AdminStudentProgress() {
     }, [students, courseFilter])
 
     const lastUpdated = dataUpdatedAt ? format(new Date(dataUpdatedAt), 'h:mm a') : null
+
+    const handleBulkDownload = useCallback(async () => {
+        if (!courseFilter || courseFilter === 'all' || bulkDownloading) return
+        setBulkDownloading(true)
+        try {
+            const res = await analyticsAPI.downloadBulkCourseReport(courseFilter)
+            const blob = new Blob([res.data], { type: 'application/pdf' })
+            const url = window.URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            const courseTitle = courseOptions.find(c => c.id === courseFilter)?.title || 'course'
+            a.download = `${courseTitle.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 60)}-all-students-report.pdf`
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+            window.URL.revokeObjectURL(url)
+            toast.success('Bulk report downloaded')
+        } catch (err) {
+            let message = 'Failed to download bulk report'
+            try {
+                if (err.response?.data instanceof Blob) {
+                    const text = await err.response.data.text()
+                    const parsed = JSON.parse(text)
+                    if (parsed?.message) message = parsed.message
+                } else if (err.response?.data?.message) {
+                    message = err.response.data.message
+                }
+            } catch { /* keep default */ }
+            toast.error(message)
+        } finally {
+            setBulkDownloading(false)
+        }
+    }, [courseFilter, courseOptions, bulkDownloading])
 
     // Count per status for tab badges
     const statusCounts = useMemo(() => {
