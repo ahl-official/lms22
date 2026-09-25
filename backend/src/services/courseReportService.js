@@ -7,7 +7,6 @@ const RolePlayAttempt = require('../models/RolePlayAttempt');
 const LessonProgress = require('../models/LessonProgress');
 const Lesson = require('../models/Lesson');
 const Module = require('../models/Module');
-const { buildAssessmentReportData } = require('./assessmentReportService');
 const { getModuleCompletionSnapshot } = require('./courseProgressService');
 
 const valueOrNA = (value) => {
@@ -147,12 +146,6 @@ const buildCourseReportData = async ({ traineeId, courseId }) => {
   const assessmentRounds = attempts.map((attempt) => {
     const testKey = attempt.test_id?._id?.toString() || attempt.test_id?.toString() || 'unknown';
     assessmentRoundByTest[testKey] = (assessmentRoundByTest[testKey] || 0) + 1;
-    const reportSlice = buildAssessmentReportData({
-      attempt,
-      trainee,
-      course,
-      test: attempt.test_id,
-    });
     return {
       round: assessmentRoundByTest[testKey],
       testTitle: attempt.test_id?.title || 'Assessment',
@@ -168,7 +161,6 @@ const buildCourseReportData = async ({ traineeId, courseId }) => {
       submittedAt: attempt.submitted_at,
       feedback: attempt.ai_feedback || null,
       rubric: attempt.ai_rubric_breakdown || null,
-      questionRows: reportSlice.questionRows || [],
     };
   });
 
@@ -193,14 +185,6 @@ const buildCourseReportData = async ({ traineeId, courseId }) => {
       recommendedFocus: attempt.summary?.recommended_focus_display
         || attempt.summary?.recommended_focus
         || null,
-      turns: userTurns.map((turn, index) => ({
-        index: index + 1,
-        answer: turn.content || '',
-        coachingScore: turn.coaching?.score ?? null,
-        tip: turn.coaching?.tip_display || turn.coaching?.tip || null,
-        whatWorked: turn.coaching?.what_worked_display || turn.coaching?.what_worked || null,
-        spokenFeedback: turn.coaching?.spoken_feedback_display || turn.coaching?.spoken_feedback || null,
-      })),
     };
   });
 
@@ -370,25 +354,6 @@ const createCourseReportPdfBuffer = (report) => new Promise((resolve, reject) =>
       doc.moveDown(0.35);
     }
 
-    if (round.questionRows?.length) {
-      round.questionRows.forEach((row, qIndex) => {
-        ensureRoom(doc, 110);
-        doc.fillColor('#111827').font('Helvetica-Bold').fontSize(10)
-          .text(`Q${qIndex + 1}  (${row.score})`, PAGE.left, doc.y, { width: PAGE.width });
-        doc.moveDown(0.2);
-        label(doc, 'Question');
-        body(doc, row.question);
-        doc.moveDown(0.25);
-        label(doc, 'Student Answer');
-        body(doc, row.answer || 'No answer saved');
-        if (row.feedback) {
-          doc.moveDown(0.25);
-          label(doc, 'AI Feedback');
-          body(doc, row.feedback);
-        }
-        doc.moveDown(0.55);
-      });
-    }
     doc.moveDown(0.4);
   });
 
@@ -441,37 +406,6 @@ const createCourseReportPdfBuffer = (report) => new Promise((resolve, reject) =>
       doc.moveDown(0.3);
     }
 
-    if (round.turns?.length) {
-      round.turns.forEach((turn) => {
-        ensureRoom(doc, 100);
-        doc.fillColor('#111827').font('Helvetica-Bold').fontSize(10)
-          .text(
-            `Answer ${turn.index}${turn.coachingScore != null ? `  (${turn.coachingScore}/10)` : ''}`,
-            PAGE.left,
-            doc.y,
-            { width: PAGE.width },
-          );
-        doc.moveDown(0.2);
-        label(doc, 'Trainee Said');
-        body(doc, turn.answer || 'No answer saved');
-        if (turn.whatWorked) {
-          doc.moveDown(0.2);
-          label(doc, 'What Worked');
-          body(doc, turn.whatWorked);
-        }
-        if (turn.tip) {
-          doc.moveDown(0.2);
-          label(doc, 'AI Tip');
-          body(doc, turn.tip);
-        }
-        if (turn.spokenFeedback) {
-          doc.moveDown(0.2);
-          label(doc, 'Spoken Feedback');
-          body(doc, turn.spokenFeedback);
-        }
-        doc.moveDown(0.5);
-      });
-    }
     doc.moveDown(0.35);
   });
 
