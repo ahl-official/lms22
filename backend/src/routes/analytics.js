@@ -725,6 +725,40 @@ router.get(
   }
 );
 
+// GET /api/analytics/admin/student-progress/:traineeId/courses/:courseId/report-debug
+// Admin-only: returns raw report data as JSON for debugging (no PDF generated).
+router.get(
+  '/admin/student-progress/:traineeId/courses/:courseId/report-debug',
+  authenticate,
+  authorize('admin'),
+  async (req, res, next) => {
+    try {
+      const { buildCourseReportData } = require('../services/courseReportService');
+      const report = await buildCourseReportData({
+        traineeId: req.params.traineeId,
+        courseId: req.params.courseId,
+      });
+      // Return key debug fields only (not full lesson rows to keep response small)
+      return res.json({
+        success: true,
+        courseTitle: report.course.title,
+        progress: report.enrollment.progress,
+        completedLessons: report.completion.completedLessons,
+        totalLessons: report.completion.totalLessons,
+        lessonRows: report.lessonRows.map(r => ({
+          title: r.title,
+          status: r.status,
+          score: r.score,
+          watchPercent: r.watchPercent,
+        })),
+      });
+    } catch (err) {
+      if (err.status) return res.status(err.status).json({ success: false, message: err.message });
+      return next(err);
+    }
+  }
+);
+
 // GET /api/analytics/admin/student-progress/:traineeId/courses/:courseId/report.pdf
 // Admin-only detailed course report PDF (all rounds, AI feedback, completion).
 router.get(
