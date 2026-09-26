@@ -297,12 +297,34 @@ const createCourseReportPdfBuffer = (report) => new Promise((resolve, reject) =>
   if (!report.lessonRows.length) {
     body(doc, 'No lessons found for this course.');
   } else {
+    // Show incomplete/not-started lessons first as a summary
+    const incompleteLessons = report.lessonRows.filter(l => l.status !== 'completed');
+    if (incompleteLessons.length > 0) {
+      ensureRoom(doc, 30);
+      doc.fillColor('#b91c1c').font('Helvetica-Bold').fontSize(9)
+        .text(`⚠  Incomplete / Not Yet Done: ${incompleteLessons.length} of ${report.lessonRows.length} lessons`, PAGE.left, doc.y, { width: PAGE.width });
+      doc.moveDown(0.2);
+      incompleteLessons.forEach((lesson) => {
+        ensureRoom(doc, 18);
+        const statusColor = lesson.status === 'in_progress' ? '#b45309' : '#9ca3af';
+        doc.fillColor(statusColor).font('Helvetica').fontSize(9)
+          .text(`  • ${lesson.title} [${lesson.status.replace('_', ' ')}]`, PAGE.left, doc.y, { width: PAGE.width });
+        doc.moveDown(0.2);
+      });
+      doc.moveDown(0.3);
+    }
+
+    // Full numbered list of all lessons
     report.lessonRows.forEach((lesson, index) => {
       ensureRoom(doc, 54);
-      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(10)
-        .text(`${index + 1}. ${lesson.title}`, PAGE.left, doc.y, { width: 340 });
-      doc.fillColor('#2563eb').font('Helvetica-Bold').fontSize(10)
-        .text(`${lesson.status} · ${percent(lesson.watchPercent)}`, PAGE.left + 340, doc.y - 12, {
+      const isComplete = lesson.status === 'completed';
+      const isInProgress = lesson.status === 'in_progress';
+      const lessonColor = isComplete ? '#15803d' : (isInProgress ? '#b45309' : '#dc2626');
+      const statusIcon = isComplete ? '✓' : (isInProgress ? '◑' : '○');
+      doc.fillColor(lessonColor).font('Helvetica-Bold').fontSize(10)
+        .text(`${statusIcon}  ${index + 1}. ${lesson.title}`, PAGE.left, doc.y, { width: 340 });
+      doc.fillColor(lessonColor).font('Helvetica-Bold').fontSize(10)
+        .text(`${lesson.status.replace('_', ' ')} · ${percent(lesson.watchPercent)}`, PAGE.left + 340, doc.y - 12, {
           width: 159,
           align: 'right',
         });
@@ -313,6 +335,7 @@ const createCourseReportPdfBuffer = (report) => new Promise((resolve, reject) =>
       doc.moveDown(0.45);
     });
   }
+
 
   doc.moveDown(0.6);
   sectionTitle(doc, `Assessment Rounds (${report.assessmentRounds.length})`, 90);
@@ -539,20 +562,22 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
       };
     });
 
-    // Lesson rows
+    // Lesson rows — include ALL lessons (completed and incomplete)
     const progressByLessonId = {};
     for (const item of lessonProgress) {
       const key = item.lesson_id?._id?.toString() || item.lesson_id?.toString();
       if (key) progressByLessonId[key] = item;
     }
-    const lessonRows = lessons.map((lesson) => {
+    const lessonRows = lessons.map((lesson, lessonIdx) => {
       const key = lesson._id.toString();
       const prog = progressByLessonId[key];
       const completed = completedLessonIds.has(key) || prog?.status === 'completed';
       return {
+        index: lessonIdx + 1,
         title: lesson.title,
         status: completed ? 'completed' : (prog?.status || 'not_started'),
         watchPercent: prog?.watch_percent ?? (completed ? 100 : 0),
+        // No student response/qa data included — just progress status
       };
     });
 
@@ -739,20 +764,75 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
       if (isAmericanHairline) {
          if (s.chapterRounds && s.chapterRounds.length) {
             sectionTitle(doc, 'Chapter Progress & Analysis', 60);
-            s.chapterRounds.forEach(chapter => {
+
+            // Separate completed and incomplete chapters
+            const completedChapters = s.chapterRounds.filter(c => c.attemptsCount > 0 && c.passed);
+            const incompleteChapters = s.chapterRounds.filter(c => c.attemptsCount === 0 || !c.passed);
+
+            // ── Incomplete / Pending chapters first ──────────────────────────
+            if (incompleteChapters.length) {
+               ensureRoom(doc, 40);
+               doc.fillColor('#b91c1c').font('Helvetica-Bold').fontSize(10)
+                  .text(`Incomplete / Not Passed  (${incompleteChapters.length} of ${s.chapterRounds.length} chapters)`, PAGE.left, doc.y, { width: PAGE.width });
+               doc.moveDown(0.3);
+
+               incompleteChapters.forEach((chapter, idx) => {
+                  ensureRoom(doc, 50);
+                  const chapNum = s.chapterRounds.indexOf(chapter) + 1;
+                  const statusTag = chapter.attemptsCount === 0 ? '⬜ Pending (no attempt)' : `✗ Not Passed`;
+                  const scoreInfo = chapter.attemptsCount > 0 ? `  |  Best Score: ${chapter.scoreLabel}  |  Attempts: ${chapter.attemptsCount}` : '';
+
+                  doc.fillColor('#7f1d1d').font('Helvetica-Bold').fontSize(10)
+                     .text(`Chapter ${chapNum}: ${chapter.lessonTitle}`, PAGE.left, doc.y, { width: PAGE.width });
+                  doc.moveDown(0.15);
+                  doc.fillColor('#b91c1c').font('Helvetica').fontSize(9)
+                     .text(`${statusTag}${scoreInfo}`, PAGE.left + 12, doc.y, { width: PAGE.width - 12 });
+
+                  if (chapter.attemptsCount > 0 && chapter.weakPoints && chapter.weakPoints.length) {
+                     doc.moveDown(0.2);
+                     label(doc, 'AREAS TO IMPROVE');
+                     chapter.weakPoints.forEach(wp => {
+                        const tip = wp.tip_display || wp.tip || wp;
+                        const area = wp.area_display || wp.area || 'Area';
+                        if (typeof wp === 'string') {
+                           body(doc, `  • ${wp}`, { size: 9 });
+                        } else {
+                           body(doc, `  • ${area}: ${tip}`, { size: 9 });
+                        }
+                     });
+                  }
+                  doc.moveDown(0.35);
+               });
+               doc.moveDown(0.3);
+            }
+
+            // ── All chapters (full numbered list) ────────────────────────────
+            ensureRoom(doc, 40);
+            doc.fillColor('#111827').font('Helvetica-Bold').fontSize(10)
+               .text('All Chapters — Complete Overview', PAGE.left, doc.y, { width: PAGE.width });
+            doc.moveDown(0.3);
+
+            s.chapterRounds.forEach((chapter, idx) => {
                ensureRoom(doc, 100);
-               doc.fillColor('#111827').font('Helvetica-Bold').fontSize(11)
-                  .text(chapter.lessonTitle, PAGE.left, doc.y, { width: PAGE.width });
+               const chapNum = idx + 1;
+               const isPassed = chapter.attemptsCount > 0 && chapter.passed;
+               const isPending = chapter.attemptsCount === 0;
+               const titleColor = isPassed ? '#15803d' : (isPending ? '#6b7280' : '#b91c1c');
+               const statusIcon = isPassed ? '✓' : (isPending ? '○' : '✗');
+
+               // Chapter title with number
+               doc.fillColor(titleColor).font('Helvetica-Bold').fontSize(11)
+                  .text(`${statusIcon}  Chapter ${chapNum}: ${chapter.lessonTitle}`, PAGE.left, doc.y, { width: PAGE.width });
                doc.moveDown(0.2);
 
                const statusLine = [
                  `Best Score: ${chapter.scoreLabel}`,
                  `Attempts: ${chapter.attemptsCount}`,
-                 `Result: ${chapter.attemptsCount === 0 ? 'Pending' : (chapter.passed ? 'Passed ✓' : 'Not passed')}`
+                 `Result: ${isPending ? 'Pending' : (isPassed ? 'Passed ✓' : 'Not Passed ✗')}`
                ].join('  |  ');
 
                doc.fillColor('#374151').font('Helvetica-Bold').fontSize(9)
-                  .text(statusLine, PAGE.left, doc.y, { width: PAGE.width });
+                  .text(statusLine, PAGE.left + 16, doc.y, { width: PAGE.width - 16 });
                doc.moveDown(0.3);
 
                if (chapter.attemptsCount > 0) {
@@ -765,14 +845,14 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
                   }
 
                   if (chapter.weakPoints && chapter.weakPoints.length) {
-                      label(doc, 'WEAK POINTS');
+                      label(doc, 'AREAS TO IMPROVE');
                       chapter.weakPoints.forEach(wp => {
                           const tip = wp.tip_display || wp.tip || wp;
                           const area = wp.area_display || wp.area || 'Area';
                           if (typeof wp === 'string') {
-                             body(doc, `• ${wp}`, { size: 9 });
+                             body(doc, `  • ${wp}`, { size: 9 });
                           } else {
-                             body(doc, `• ${area}: ${tip}`, { size: 9 });
+                             body(doc, `  • ${area}: ${tip}`, { size: 9 });
                           }
                       });
                       doc.moveDown(0.3);

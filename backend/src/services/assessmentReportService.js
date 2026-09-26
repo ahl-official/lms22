@@ -281,9 +281,8 @@ const createAssessmentReportPdfBuffer = (report) => new Promise((resolve, reject
   }
 
   report.questionRows.forEach((row, index) => {
-    const estimatedHeight = 105
+    const estimatedHeight = 85
       + doc.heightOfString(valueOrNA(row.question), { width: PAGE.width, lineGap: 3 })
-      + doc.heightOfString(valueOrNA(row.answer || 'No answer saved'), { width: PAGE.width, lineGap: 3 })
       + (row.feedback ? doc.heightOfString(row.feedback, { width: PAGE.width, lineGap: 3 }) + 18 : 0)
       + (row.correctAnswer ? doc.heightOfString(row.correctAnswer, { width: PAGE.width, lineGap: 3 }) + 18 : 0);
     ensureRoom(doc, Math.min(estimatedHeight, 360));
@@ -297,9 +296,7 @@ const createAssessmentReportPdfBuffer = (report) => new Promise((resolve, reject
     doc.moveDown(0.4);
     label(doc, 'Question');
     body(doc, row.question);
-    doc.moveDown(0.4);
-    label(doc, 'Student Answer');
-    body(doc, row.answer || 'No answer saved');
+    // Student answer intentionally omitted — voice/text responses can contain garbled data
     if (row.feedback) {
       doc.moveDown(0.4);
       label(doc, 'Bot Feedback');
