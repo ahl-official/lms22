@@ -197,24 +197,31 @@ const buildCourseReportData = async ({ traineeId, courseId }) => {
     if (key) progressByLessonId[key] = item;
   }
 
-  // For American Hairline, determine attempt-based completion per lesson
+  // For American Hairline, determine attempt-based completion per lesson.
+  // A lesson is "attempted" if:
+  //   1. A RolePlayAttempt exists for that lesson_id (lesson_id is always set on RP), OR
+  //   2. LessonProgress has a score recorded (score != null means an assessment was submitted;
+  //      lessons merely opened/unlocked have score=null but status='completed').
   const attemptedLessonIds = new Set();
   if (isAmericanHairlineSingle) {
-    for (const a of attempts) {
-      const lid = a.test_id?.lesson_id?._id?.toString() || a.test_id?.lesson_id?.toString();
-      if (lid) attemptedLessonIds.add(lid);
-    }
     for (const rp of rolePlayAttempts) {
       const lid = rp.lesson_id?._id?.toString() || rp.lesson_id?.toString();
       if (lid) attemptedLessonIds.add(lid);
     }
-    // Override completion counts for American Hairline
+    for (const item of lessonProgress) {
+      if (item.score != null) {
+        const lid = item.lesson_id?._id?.toString() || item.lesson_id?.toString();
+        if (lid) attemptedLessonIds.add(lid);
+      }
+    }
+    // Override completion counts based on actual attempts
     completedLessons = lessons.filter((l) => attemptedLessonIds.has(l._id.toString())).length;
     progress = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
-    // Recompute modules: a module is complete if all its lessons were attempted
     completedModules = modules.filter((mod) => {
-      const modLessons = lessons.filter((l) => l.module_id?.toString() === mod._id.toString() ||
-        l.module_id?._id?.toString() === mod._id.toString());
+      const modLessons = lessons.filter((l) =>
+        l.module_id?.toString() === mod._id.toString() ||
+        l.module_id?._id?.toString() === mod._id.toString()
+      );
       return modLessons.length > 0 && modLessons.every((l) => attemptedLessonIds.has(l._id.toString()));
     }).length;
   }
@@ -609,6 +616,15 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
       };
     });
 
+    // For American Hairline: build a set of lesson IDs that were actually attempted
+    // (RolePlayAttempt has lesson_id always; LessonProgress.score != null means an
+    // assessment was submitted, vs score=null which means lesson was just opened/unlocked)
+    const lpScoreByLessonId = {};
+    for (const item of lessonProgress) {
+      const lid = item.lesson_id?._id?.toString() || item.lesson_id?.toString();
+      if (lid) lpScoreByLessonId[lid] = item.score;
+    }
+
     // Custom for American Hairline
     let chapterRounds = [];
     if (isAmericanHairline) {
@@ -622,14 +638,12 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
                if (!bestRP || rp.score > bestRP.score) bestRP = rp;
            }
         });
-        let bestAssessment = null;
-        let assessCount = 0;
-        attempts.forEach(a => {
-           if ((a.test_id?.lesson_id?._id?.toString() || a.test_id?.lesson_id?.toString()) === lessonKey) {
-               assessCount++;
-               if (!bestAssessment || a.score > bestAssessment.score) bestAssessment = a;
-           }
-        });
+
+        // Use LessonProgress.score != null to detect assessment submission
+        // (test_id.lesson_id is often null on older tests — unreliable)
+        const lpScore = lpScoreByLessonId[lessonKey];
+        const hasLpScore = lpScore != null;
+        const assessCount = hasLpScore ? 1 : 0;
 
         const attemptsCount = rpCount + assessCount;
         if (attemptsCount === 0) {
@@ -655,10 +669,9 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
                     if (lk.includes('fumbling')) fumbling = v;
                 }
             }
-        } else if (bestAssessment) {
-            scoreLabel = percent(bestAssessment.score);
-            passed = bestAssessment.score >= (bestAssessment.passing_score || bestAssessment.test_id?.passing_score || 60);
-            if (bestAssessment.ai_feedback) weakPoints = [{ area: 'Feedback', tip: bestAssessment.ai_feedback }];
+        } else if (hasLpScore) {
+            scoreLabel = percent(lpScore);
+            passed = lpScore >= 60;
         }
 
         return { lessonTitle: lesson.title, attemptsCount, scoreLabel, passed, confidence, behavioral, fumbling, weakPoints };
