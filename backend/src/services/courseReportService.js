@@ -126,17 +126,20 @@ const buildCourseReportData = async ({ traineeId, courseId }) => {
   const snapshot = await getModuleCompletionSnapshot({ traineeId, moduleIds });
   const totalLessons = lessons.length;
   const completedLessonIds = snapshot.completedLessonIds || new Set();
-  const completedLessons = lessons.filter((l) => completedLessonIds.has(l._id.toString())).length;
-  const completedModules = modules.filter((mod) => {
+  let completedLessons = lessons.filter((l) => completedLessonIds.has(l._id.toString())).length;
+  let completedModules = modules.filter((mod) => {
     const key = mod._id.toString();
     const total = snapshot.totalByModule[key] || 0;
     const done = snapshot.completedByModule[key] || 0;
     return total === 0 || done >= total;
   }).length;
 
-  const progress = totalLessons > 0
+  let progress = totalLessons > 0
     ? Math.round((completedLessons / totalLessons) * 100)
     : (enrollment.progress || 0);
+
+  // For American Hairline: completion = attempted the assessment, not video watch progress
+  const isAmericanHairlineSingle = (course.title || '').toLowerCase().includes('american hairline');
 
   const assessmentScores = attempts.map((a) => a.score).filter((s) => s != null);
   const rolePlayScores = rolePlayAttempts.map((a) => a.score).filter((s) => s != null);
@@ -194,11 +197,36 @@ const buildCourseReportData = async ({ traineeId, courseId }) => {
     if (key) progressByLessonId[key] = item;
   }
 
+  // For American Hairline, determine attempt-based completion per lesson
+  const attemptedLessonIds = new Set();
+  if (isAmericanHairlineSingle) {
+    for (const a of attempts) {
+      const lid = a.test_id?.lesson_id?._id?.toString() || a.test_id?.lesson_id?.toString();
+      if (lid) attemptedLessonIds.add(lid);
+    }
+    for (const rp of rolePlayAttempts) {
+      const lid = rp.lesson_id?._id?.toString() || rp.lesson_id?.toString();
+      if (lid) attemptedLessonIds.add(lid);
+    }
+    // Override completion counts for American Hairline
+    completedLessons = lessons.filter((l) => attemptedLessonIds.has(l._id.toString())).length;
+    progress = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+    // Recompute modules: a module is complete if all its lessons were attempted
+    completedModules = modules.filter((mod) => {
+      const modLessons = lessons.filter((l) => l.module_id?.toString() === mod._id.toString() ||
+        l.module_id?._id?.toString() === mod._id.toString());
+      return modLessons.length > 0 && modLessons.every((l) => attemptedLessonIds.has(l._id.toString()));
+    }).length;
+  }
+
   const lessonRows = lessons.map((lesson) => {
     const key = lesson._id.toString();
     const prog = progressByLessonId[key];
     const mod = modules.find((m) => m._id.toString() === (lesson.module_id?._id || lesson.module_id)?.toString());
-    const completed = completedLessonIds.has(key) || prog?.status === 'completed';
+    // For American Hairline: completed = assessment attempted; otherwise use watch progress
+    const completed = isAmericanHairlineSingle
+      ? attemptedLessonIds.has(key)
+      : (completedLessonIds.has(key) || prog?.status === 'completed');
     return {
       title: lesson.title,
       moduleTitle: mod?.title || null,
@@ -511,12 +539,12 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
     const snapshot = await getModuleCompletionSnapshot({ traineeId: trainee._id, moduleIds });
     const totalLessons = lessons.length;
     const completedLessonIds = snapshot.completedLessonIds || new Set();
-    const completedLessons = lessons.filter((l) => completedLessonIds.has(l._id.toString())).length;
-    const completedModules = modules.filter((mod) => {
+    let completedLessons = lessons.filter((l) => completedLessonIds.has(l._id.toString())).length;
+    let completedModules = modules.filter((mod) => {
       const key = mod._id.toString();
       return (snapshot.totalByModule[key] || 0) === 0 || (snapshot.completedByModule[key] || 0) >= (snapshot.totalByModule[key] || 0);
     }).length;
-    const progress = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : (enrollment.progress || 0);
+    let progress = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : (enrollment.progress || 0);
 
     const attempts = attemptsByTrainee[tid] || [];
     const rolePlayAttempts = rolePlayByTrainee[tid] || [];
@@ -635,6 +663,20 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
 
         return { lessonTitle: lesson.title, attemptsCount, scoreLabel, passed, confidence, behavioral, fumbling, weakPoints };
       });
+
+      // For American Hairline: completion = attempted (not watch progress) — override counts
+      completedLessons = chapterRounds.filter((c) => c.attemptsCount > 0).length;
+      progress = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+      completedModules = modules.filter((mod) => {
+        const modLessons = lessons.filter((l) => l.module_id?.toString() === mod._id.toString() ||
+          l.module_id?._id?.toString() === mod._id.toString());
+        const modChapters = chapterRounds.filter((c, i) => {
+          const lesson = lessons[i];
+          return lesson && (lesson.module_id?.toString() === mod._id.toString() ||
+            lesson.module_id?._id?.toString() === mod._id.toString());
+        });
+        return modChapters.length > 0 && modChapters.every((c) => c.attemptsCount > 0);
+      }).length;
     }
 
     students.push({
@@ -765,15 +807,15 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
          if (s.chapterRounds && s.chapterRounds.length) {
             sectionTitle(doc, 'Chapter Progress & Analysis', 60);
 
-            // Separate completed and incomplete chapters
-            const completedChapters = s.chapterRounds.filter(c => c.attemptsCount > 0 && c.passed);
-            const incompleteChapters = s.chapterRounds.filter(c => c.attemptsCount === 0 || !c.passed);
+            // For American Hairline: "complete" = attempted (attemptsCount > 0), not score-based passing
+            const completedChapters = s.chapterRounds.filter(c => c.attemptsCount > 0);
+            const incompleteChapters = s.chapterRounds.filter(c => c.attemptsCount === 0);
 
             // ── Incomplete / Pending chapters first ──────────────────────────
             if (incompleteChapters.length) {
                ensureRoom(doc, 40);
                doc.fillColor('#b91c1c').font('Helvetica-Bold').fontSize(10)
-                  .text(`Incomplete / Not Passed  (${incompleteChapters.length} of ${s.chapterRounds.length} chapters)`, PAGE.left, doc.y, { width: PAGE.width });
+                  .text(`Not Yet Attempted  (${incompleteChapters.length} of ${s.chapterRounds.length} chapters)`, PAGE.left, doc.y, { width: PAGE.width });
                doc.moveDown(0.3);
 
                incompleteChapters.forEach((chapter, idx) => {
