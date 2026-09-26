@@ -440,6 +440,8 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
     const err = new Error('No students enrolled in this course'); err.status = 404; throw err;
   }
 
+  const isAmericanHairline = (course.title || '').toLowerCase().includes('american hairline');
+
   const moduleIds = modules.map((m) => m._id);
   const traineeIds = enrollments.map((e) => e.trainee_id?._id || e.trainee_id).filter(Boolean);
 
@@ -554,6 +556,62 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
       };
     });
 
+    // Custom for American Hairline
+    let chapterRounds = [];
+    if (isAmericanHairline) {
+      chapterRounds = lessons.map(lesson => {
+        const lessonKey = lesson._id.toString();
+        let bestRP = null;
+        let rpCount = 0;
+        rolePlayAttempts.forEach(rp => {
+           if ((rp.lesson_id?._id?.toString() || rp.lesson_id?.toString()) === lessonKey) {
+               rpCount++;
+               if (!bestRP || rp.score > bestRP.score) bestRP = rp;
+           }
+        });
+        let bestAssessment = null;
+        let assessCount = 0;
+        attempts.forEach(a => {
+           if ((a.test_id?.lesson_id?._id?.toString() || a.test_id?.lesson_id?.toString()) === lessonKey) {
+               assessCount++;
+               if (!bestAssessment || a.score > bestAssessment.score) bestAssessment = a;
+           }
+        });
+
+        const attemptsCount = rpCount + assessCount;
+        if (attemptsCount === 0) {
+            return { lessonTitle: lesson.title, attemptsCount: 0, scoreLabel: 'N/A', passed: false };
+        }
+
+        let scoreLabel = 'N/A';
+        let passed = false;
+        let confidence = null;
+        let behavioral = null;
+        let fumbling = null;
+        let weakPoints = [];
+
+        if (bestRP) {
+            scoreLabel = percent(bestRP.score);
+            passed = !!bestRP.passed;
+            if (bestRP.summary) weakPoints = bestRP.summary.improvements || [];
+            if (bestRP.rubric && typeof bestRP.rubric === 'object') {
+                for (const [k, v] of Object.entries(bestRP.rubric)) {
+                    const lk = k.toLowerCase();
+                    if (lk.includes('confidence')) confidence = v;
+                    if (lk.includes('behavioral') || lk.includes('behavior')) behavioral = v;
+                    if (lk.includes('fumbling')) fumbling = v;
+                }
+            }
+        } else if (bestAssessment) {
+            scoreLabel = percent(bestAssessment.score);
+            passed = bestAssessment.score >= (bestAssessment.passing_score || bestAssessment.test_id?.passing_score || 60);
+            if (bestAssessment.ai_feedback) weakPoints = [{ area: 'Feedback', tip: bestAssessment.ai_feedback }];
+        }
+
+        return { lessonTitle: lesson.title, attemptsCount, scoreLabel, passed, confidence, behavioral, fumbling, weakPoints };
+      });
+    }
+
     students.push({
       name: trainee.name || 'Unknown',
       email: trainee.email || '',
@@ -575,6 +633,7 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
       lessonRows,
       assessmentRounds,
       rolePlayRounds,
+      chapterRounds,
     });
   }
 
@@ -677,7 +736,53 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
       });
       doc.y = snapTop + (Math.ceil(snapCards.length / 3)) * 58 + 10;
 
-      // Lesson progress
+      if (isAmericanHairline) {
+         if (s.chapterRounds && s.chapterRounds.length) {
+            sectionTitle(doc, 'Chapter Progress & Analysis', 60);
+            s.chapterRounds.forEach(chapter => {
+               ensureRoom(doc, 100);
+               doc.fillColor('#111827').font('Helvetica-Bold').fontSize(11)
+                  .text(chapter.lessonTitle, PAGE.left, doc.y, { width: PAGE.width });
+               doc.moveDown(0.2);
+
+               const statusLine = [
+                 `Best Score: ${chapter.scoreLabel}`,
+                 `Attempts: ${chapter.attemptsCount}`,
+                 `Result: ${chapter.attemptsCount === 0 ? 'Pending' : (chapter.passed ? 'Passed ✓' : 'Not passed')}`
+               ].join('  |  ');
+
+               doc.fillColor('#374151').font('Helvetica-Bold').fontSize(9)
+                  .text(statusLine, PAGE.left, doc.y, { width: PAGE.width });
+               doc.moveDown(0.3);
+
+               if (chapter.attemptsCount > 0) {
+                  if (chapter.confidence || chapter.behavioral || chapter.fumbling) {
+                      label(doc, 'QUALITATIVE ASPECTS');
+                      if (chapter.confidence) body(doc, `  Confidence:        ${chapter.confidence}`, { size: 9 });
+                      if (chapter.behavioral) body(doc, `  Behavioral Skills: ${chapter.behavioral}`, { size: 9 });
+                      if (chapter.fumbling)   body(doc, `  Fumbling:          ${chapter.fumbling}`, { size: 9 });
+                      doc.moveDown(0.3);
+                  }
+
+                  if (chapter.weakPoints && chapter.weakPoints.length) {
+                      label(doc, 'WEAK POINTS');
+                      chapter.weakPoints.forEach(wp => {
+                          const tip = wp.tip_display || wp.tip || wp;
+                          const area = wp.area_display || wp.area || 'Area';
+                          if (typeof wp === 'string') {
+                             body(doc, `• ${wp}`, { size: 9 });
+                          } else {
+                             body(doc, `• ${area}: ${tip}`, { size: 9 });
+                          }
+                      });
+                      doc.moveDown(0.3);
+                  }
+               }
+               doc.moveDown(0.4);
+            });
+         }
+      } else {
+        // Lesson progress
       if (s.lessonRows.length) {
         sectionTitle(doc, 'Lesson Progress', 50);
         s.lessonRows.forEach((lesson, index) => {
@@ -756,6 +861,7 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
           doc.moveDown(0.4);
         });
       }
+      } // End of !isAmericanHairline block
 
       doc.moveDown(0.8);
       // Divider between students
