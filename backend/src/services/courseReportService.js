@@ -77,6 +77,118 @@ const avg = (values) => {
   return Math.round((nums.reduce((s, v) => s + v, 0) / nums.length) * 10) / 10;
 };
 
+const idOf = (v) => v?._id?.toString() || v?.toString() || null;
+const FILLER_RE = /\b(um+|uh+|er+|erm|hmm+|you know|i mean|like|basically|actually)\b/gi;
+
+// One row per lesson/chapter: attempted? best round only, feedback, confidence, fumbling, weak spots.
+// Attempted = any roleplay, any scored assessment tied to the lesson, or a LessonProgress.score.
+// No answers/transcripts are included in the output.
+const buildChapterRounds = ({ lessons, rolePlayAttempts, attempts, lessonProgress }) => {
+  const lpScore = {};
+  for (const lp of lessonProgress) {
+    const id = idOf(lp.lesson_id);
+    if (id) lpScore[id] = lp.score;
+  }
+
+  return lessons.map((lesson) => {
+    const key = lesson._id.toString();
+    const rps = rolePlayAttempts.filter((r) => idOf(r.lesson_id) === key);
+    const ass = attempts.filter((a) => idOf(a.test_id?.lesson_id) === key);
+    const lp = lpScore[key];
+    const count = rps.length + ass.length + (!ass.length && lp != null ? 1 : 0);
+    if (!count) return { lessonTitle: lesson.title, attemptsCount: 0, scoreLabel: 'N/A', passed: false };
+
+    const best = (list) => list.reduce((b, x) => (b == null || (x.score ?? -1) > (b.score ?? -1) ? x : b), null);
+    const bestRP = best(rps);
+    const bestAs = best(ass);
+    const useAs = bestAs && (!bestRP || (bestAs.score ?? -1) >= (bestRP.score ?? -1));
+
+    const out = { lessonTitle: lesson.title, attemptsCount: count, scoreLabel: 'N/A', passed: false,
+      feedback: null, confidence: null, fumbling: null, weakPoints: [], recommendedFocus: null };
+
+    let text = '';
+    if (useAs) {
+      const rubric = bestAs.ai_rubric_breakdown && typeof bestAs.ai_rubric_breakdown === 'object' ? bestAs.ai_rubric_breakdown : {};
+      const pass = bestAs.passing_score || bestAs.test_id?.passing_score || 60;
+      out.scoreLabel = percent(bestAs.score);
+      out.passed = bestAs.score >= pass;
+      out.feedback = bestAs.ai_feedback || null;
+      if (rubric.confidence_score != null) out.confidence = `${Math.round(rubric.confidence_score)}%`;
+      // lagging = rubric categories under the pass mark
+      out.weakPoints = Object.entries(rubric)
+        .filter(([, v]) => typeof v === 'number' && v < pass)
+        .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${Math.round(v)}%`);
+      text = bestAs.voice_transcript || '';
+    } else if (bestRP) {
+      const s = bestRP.summary || {};
+      out.scoreLabel = percent(bestRP.score);
+      out.passed = !!bestRP.passed;
+      out.feedback = s.summary_display || s.summary || null;
+      out.weakPoints = s.improvements || [];
+      out.recommendedFocus = s.recommended_focus_display || s.recommended_focus || null;
+      const turns = (bestRP.conversation || []).filter((t) => t.role === 'user');
+      const coach = turns.map((t) => t.coaching?.score).filter((n) => Number.isFinite(Number(n))).map(Number);
+      if (coach.length) out.confidence = `${Math.round((coach.reduce((a, b) => a + b, 0) / coach.length) * 10)}%`;
+      text = turns.map((t) => t.content).join(' ');
+    } else {
+      out.scoreLabel = percent(lp);
+      out.passed = lp >= 60;
+    }
+    // ponytail: fumbling = filler-word count, heuristic; swap for a real AI metric if one gets stored
+    if (text) out.fumbling = `${(text.match(FILLER_RE) || []).length} filler words`;
+    return out;
+  });
+};
+
+const renderChapters = (doc, chapters) => {
+  sectionTitle(doc, 'Chapter Progress & Analysis', 60);
+  const pending = chapters.map((c, i) => ({ ...c, n: i + 1 })).filter((c) => !c.attemptsCount);
+  const done = chapters.filter((c) => c.attemptsCount).length;
+
+  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(10)
+    .text(`Attempted: ${done} of ${chapters.length} chapters`, PAGE.left, doc.y, { width: PAGE.width });
+  doc.moveDown(0.3);
+  if (pending.length) {
+    ensureRoom(doc, 30);
+    doc.fillColor('#b91c1c').font('Helvetica').fontSize(9)
+      .text(`Not yet attempted: ${pending.map((c) => `Ch ${c.n}`).join(', ')}`, PAGE.left, doc.y, { width: PAGE.width });
+    doc.moveDown(0.5);
+  }
+
+  chapters.forEach((c, idx) => {
+    ensureRoom(doc, 110);
+    const pendingC = !c.attemptsCount;
+    const color = pendingC ? '#6b7280' : (c.passed ? '#15803d' : '#b91c1c');
+    doc.fillColor(color).font('Helvetica-Bold').fontSize(11)
+      .text(`${pendingC ? '○' : (c.passed ? '✓' : '✗')}  Chapter ${idx + 1}: ${c.lessonTitle}`, PAGE.left, doc.y, { width: PAGE.width });
+    doc.moveDown(0.2);
+    doc.fillColor('#374151').font('Helvetica-Bold').fontSize(9)
+      .text(pendingC
+        ? 'Not attempted yet'
+        : `Best round: ${c.scoreLabel}  |  Attempts: ${c.attemptsCount}  |  ${c.passed ? 'Passed' : 'Not passed'}`,
+      PAGE.left + 16, doc.y, { width: PAGE.width - 16 });
+    doc.moveDown(0.3);
+    if (pendingC) { doc.moveDown(0.3); return; }
+
+    if (c.feedback) { label(doc, 'AI feedback'); body(doc, c.feedback, { size: 9 }); doc.moveDown(0.3); }
+    if (c.confidence || c.fumbling) {
+      label(doc, 'Confidence & fumbling');
+      if (c.confidence) body(doc, `  Confidence score: ${c.confidence}`, { size: 9 });
+      if (c.fumbling) body(doc, `  Fumbling: ${c.fumbling}`, { size: 9 });
+      doc.moveDown(0.3);
+    }
+    if (c.weakPoints.length) {
+      label(doc, 'Where they are lagging');
+      c.weakPoints.forEach((wp) => body(doc,
+        typeof wp === 'string' ? `  • ${wp}` : `  • ${wp.area_display || wp.area || 'Area'}: ${wp.tip_display || wp.tip || ''}`,
+        { size: 9 }));
+      doc.moveDown(0.3);
+    }
+    if (c.recommendedFocus) { label(doc, 'Recommended focus'); body(doc, c.recommendedFocus, { size: 9 }); doc.moveDown(0.3); }
+    doc.moveDown(0.3);
+  });
+};
+
 const buildCourseReportData = async ({ traineeId, courseId }) => {
   const [trainee, course, enrollment, modules, lessons, attempts, rolePlayAttempts, lessonProgress] = await Promise.all([
     User.findById(traineeId).select('name email phone').lean(),
@@ -203,17 +315,10 @@ const buildCourseReportData = async ({ traineeId, courseId }) => {
   //   2. LessonProgress has a score recorded (score != null means an assessment was submitted;
   //      lessons merely opened/unlocked have score=null but status='completed').
   const attemptedLessonIds = new Set();
+  let chapterRounds = null;
   if (isAmericanHairlineSingle) {
-    for (const rp of rolePlayAttempts) {
-      const lid = rp.lesson_id?._id?.toString() || rp.lesson_id?.toString();
-      if (lid) attemptedLessonIds.add(lid);
-    }
-    for (const item of lessonProgress) {
-      if (item.score != null) {
-        const lid = item.lesson_id?._id?.toString() || item.lesson_id?.toString();
-        if (lid) attemptedLessonIds.add(lid);
-      }
-    }
+    chapterRounds = buildChapterRounds({ lessons, rolePlayAttempts, attempts, lessonProgress });
+    chapterRounds.forEach((c, i) => { if (c.attemptsCount) attemptedLessonIds.add(lessons[i]._id.toString()); });
     // Override completion counts based on actual attempts
     completedLessons = lessons.filter((l) => attemptedLessonIds.has(l._id.toString())).length;
     progress = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
@@ -280,6 +385,7 @@ const buildCourseReportData = async ({ traineeId, courseId }) => {
     lessonRows,
     assessmentRounds,
     rolePlayRounds,
+    chapterRounds,
   };
 };
 
@@ -327,6 +433,12 @@ const createCourseReportPdfBuffer = (report) => new Promise((resolve, reject) =>
     doc.fillColor('#64748b').font('Helvetica').fontSize(8).text(cardLabel.toUpperCase(), x + 10, y + 36, { width: 136 });
   });
   doc.y = snapTop + 160;
+
+  if (report.chapterRounds) {
+    renderChapters(doc, report.chapterRounds);
+    doc.end();
+    return;
+  }
 
   sectionTitle(doc, 'Lesson Progress', 80);
   if (!report.lessonRows.length) {
@@ -616,66 +728,9 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
       };
     });
 
-    // For American Hairline: build a set of lesson IDs that were actually attempted
-    // (RolePlayAttempt has lesson_id always; LessonProgress.score != null means an
-    // assessment was submitted, vs score=null which means lesson was just opened/unlocked)
-    const lpScoreByLessonId = {};
-    for (const item of lessonProgress) {
-      const lid = item.lesson_id?._id?.toString() || item.lesson_id?.toString();
-      if (lid) lpScoreByLessonId[lid] = item.score;
-    }
-
-    // Custom for American Hairline
     let chapterRounds = [];
     if (isAmericanHairline) {
-      chapterRounds = lessons.map(lesson => {
-        const lessonKey = lesson._id.toString();
-        let bestRP = null;
-        let rpCount = 0;
-        rolePlayAttempts.forEach(rp => {
-           if ((rp.lesson_id?._id?.toString() || rp.lesson_id?.toString()) === lessonKey) {
-               rpCount++;
-               if (!bestRP || rp.score > bestRP.score) bestRP = rp;
-           }
-        });
-
-        // Use LessonProgress.score != null to detect assessment submission
-        // (test_id.lesson_id is often null on older tests — unreliable)
-        const lpScore = lpScoreByLessonId[lessonKey];
-        const hasLpScore = lpScore != null;
-        const assessCount = hasLpScore ? 1 : 0;
-
-        const attemptsCount = rpCount + assessCount;
-        if (attemptsCount === 0) {
-            return { lessonTitle: lesson.title, attemptsCount: 0, scoreLabel: 'N/A', passed: false };
-        }
-
-        let scoreLabel = 'N/A';
-        let passed = false;
-        let confidence = null;
-        let behavioral = null;
-        let fumbling = null;
-        let weakPoints = [];
-
-        if (bestRP) {
-            scoreLabel = percent(bestRP.score);
-            passed = !!bestRP.passed;
-            if (bestRP.summary) weakPoints = bestRP.summary.improvements || [];
-            if (bestRP.rubric && typeof bestRP.rubric === 'object') {
-                for (const [k, v] of Object.entries(bestRP.rubric)) {
-                    const lk = k.toLowerCase();
-                    if (lk.includes('confidence')) confidence = v;
-                    if (lk.includes('behavioral') || lk.includes('behavior')) behavioral = v;
-                    if (lk.includes('fumbling')) fumbling = v;
-                }
-            }
-        } else if (hasLpScore) {
-            scoreLabel = percent(lpScore);
-            passed = lpScore >= 60;
-        }
-
-        return { lessonTitle: lesson.title, attemptsCount, scoreLabel, passed, confidence, behavioral, fumbling, weakPoints };
-      });
+      chapterRounds = buildChapterRounds({ lessons, rolePlayAttempts, attempts, lessonProgress });
 
       // For American Hairline: completion = attempted (not watch progress) — override counts
       completedLessons = chapterRounds.filter((c) => c.attemptsCount > 0).length;
@@ -817,105 +872,7 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
       doc.y = snapTop + (Math.ceil(snapCards.length / 3)) * 58 + 10;
 
       if (isAmericanHairline) {
-         if (s.chapterRounds && s.chapterRounds.length) {
-            sectionTitle(doc, 'Chapter Progress & Analysis', 60);
-
-            // For American Hairline: "complete" = attempted (attemptsCount > 0), not score-based passing
-            const completedChapters = s.chapterRounds.filter(c => c.attemptsCount > 0);
-            const incompleteChapters = s.chapterRounds.filter(c => c.attemptsCount === 0);
-
-            // ── Incomplete / Pending chapters first ──────────────────────────
-            if (incompleteChapters.length) {
-               ensureRoom(doc, 40);
-               doc.fillColor('#b91c1c').font('Helvetica-Bold').fontSize(10)
-                  .text(`Not Yet Attempted  (${incompleteChapters.length} of ${s.chapterRounds.length} chapters)`, PAGE.left, doc.y, { width: PAGE.width });
-               doc.moveDown(0.3);
-
-               incompleteChapters.forEach((chapter, idx) => {
-                  ensureRoom(doc, 50);
-                  const chapNum = s.chapterRounds.indexOf(chapter) + 1;
-                  const statusTag = chapter.attemptsCount === 0 ? '⬜ Pending (no attempt)' : `✗ Not Passed`;
-                  const scoreInfo = chapter.attemptsCount > 0 ? `  |  Best Score: ${chapter.scoreLabel}  |  Attempts: ${chapter.attemptsCount}` : '';
-
-                  doc.fillColor('#7f1d1d').font('Helvetica-Bold').fontSize(10)
-                     .text(`Chapter ${chapNum}: ${chapter.lessonTitle}`, PAGE.left, doc.y, { width: PAGE.width });
-                  doc.moveDown(0.15);
-                  doc.fillColor('#b91c1c').font('Helvetica').fontSize(9)
-                     .text(`${statusTag}${scoreInfo}`, PAGE.left + 12, doc.y, { width: PAGE.width - 12 });
-
-                  if (chapter.attemptsCount > 0 && chapter.weakPoints && chapter.weakPoints.length) {
-                     doc.moveDown(0.2);
-                     label(doc, 'AREAS TO IMPROVE');
-                     chapter.weakPoints.forEach(wp => {
-                        const tip = wp.tip_display || wp.tip || wp;
-                        const area = wp.area_display || wp.area || 'Area';
-                        if (typeof wp === 'string') {
-                           body(doc, `  • ${wp}`, { size: 9 });
-                        } else {
-                           body(doc, `  • ${area}: ${tip}`, { size: 9 });
-                        }
-                     });
-                  }
-                  doc.moveDown(0.35);
-               });
-               doc.moveDown(0.3);
-            }
-
-            // ── All chapters (full numbered list) ────────────────────────────
-            ensureRoom(doc, 40);
-            doc.fillColor('#111827').font('Helvetica-Bold').fontSize(10)
-               .text('All Chapters — Complete Overview', PAGE.left, doc.y, { width: PAGE.width });
-            doc.moveDown(0.3);
-
-            s.chapterRounds.forEach((chapter, idx) => {
-               ensureRoom(doc, 100);
-               const chapNum = idx + 1;
-               const isPassed = chapter.attemptsCount > 0 && chapter.passed;
-               const isPending = chapter.attemptsCount === 0;
-               const titleColor = isPassed ? '#15803d' : (isPending ? '#6b7280' : '#b91c1c');
-               const statusIcon = isPassed ? '✓' : (isPending ? '○' : '✗');
-
-               // Chapter title with number
-               doc.fillColor(titleColor).font('Helvetica-Bold').fontSize(11)
-                  .text(`${statusIcon}  Chapter ${chapNum}: ${chapter.lessonTitle}`, PAGE.left, doc.y, { width: PAGE.width });
-               doc.moveDown(0.2);
-
-               const statusLine = [
-                 `Best Score: ${chapter.scoreLabel}`,
-                 `Attempts: ${chapter.attemptsCount}`,
-                 `Result: ${isPending ? 'Pending' : (isPassed ? 'Passed ✓' : 'Not Passed ✗')}`
-               ].join('  |  ');
-
-               doc.fillColor('#374151').font('Helvetica-Bold').fontSize(9)
-                  .text(statusLine, PAGE.left + 16, doc.y, { width: PAGE.width - 16 });
-               doc.moveDown(0.3);
-
-               if (chapter.attemptsCount > 0) {
-                  if (chapter.confidence || chapter.behavioral || chapter.fumbling) {
-                      label(doc, 'QUALITATIVE ASPECTS');
-                      if (chapter.confidence) body(doc, `  Confidence:        ${chapter.confidence}`, { size: 9 });
-                      if (chapter.behavioral) body(doc, `  Behavioral Skills: ${chapter.behavioral}`, { size: 9 });
-                      if (chapter.fumbling)   body(doc, `  Fumbling:          ${chapter.fumbling}`, { size: 9 });
-                      doc.moveDown(0.3);
-                  }
-
-                  if (chapter.weakPoints && chapter.weakPoints.length) {
-                      label(doc, 'AREAS TO IMPROVE');
-                      chapter.weakPoints.forEach(wp => {
-                          const tip = wp.tip_display || wp.tip || wp;
-                          const area = wp.area_display || wp.area || 'Area';
-                          if (typeof wp === 'string') {
-                             body(doc, `  • ${wp}`, { size: 9 });
-                          } else {
-                             body(doc, `  • ${area}: ${tip}`, { size: 9 });
-                          }
-                      });
-                      doc.moveDown(0.3);
-                  }
-               }
-               doc.moveDown(0.4);
-            });
-         }
+        renderChapters(doc, s.chapterRounds);
       } else {
         // Lesson progress
       if (s.lessonRows.length) {
