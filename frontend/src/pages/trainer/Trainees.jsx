@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { usersAPI, analyticsAPI, rolePlayAPI } from '../../services/api'
-import { Search, Users, BookOpen, TrendingUp, Mic, ChevronRight, Tag, Lock, Unlock, Loader2 } from 'lucide-react'
+import { usersAPI, analyticsAPI, rolePlayAPI, enrollmentsAPI } from '../../services/api'
+import { Search, Users, BookOpen, TrendingUp, Mic, ChevronRight, Tag, Lock, Unlock, Loader2, Trash2 } from 'lucide-react'
 import ScoreBadge from '../../components/ScoreBadge'
 import { format } from 'date-fns'
 import { useAuthStore } from '../../store/authStore'
@@ -73,6 +73,22 @@ export default function Trainees() {
     },
     onError: (err) => toast.error(err.response?.data?.message || 'Failed to unlock'),
   })
+
+  const unenrollMutation = useMutation({
+    mutationFn: (enrollmentId) => enrollmentsAPI.remove(enrollmentId),
+    onSuccess: () => {
+      toast.success('Trainee unenrolled successfully')
+      qc.invalidateQueries({ queryKey: ['trainee-analytics', selected?._id] })
+      qc.invalidateQueries({ queryKey: ['trainees'] })
+    },
+    onError: (err) => toast.error(err.response?.data?.message || 'Failed to unenroll'),
+  })
+
+  const handleUnenroll = (enrollmentId, courseTitle) => {
+    if (window.confirm(`Are you sure you want to unenroll this student from "${courseTitle || 'this course'}"?`)) {
+      unenrollMutation.mutate(enrollmentId)
+    }
+  }
 
   const trainees = traineesData?.data?.users || []
   const data = analytics?.data
@@ -289,6 +305,15 @@ export default function Trainees() {
                             }`}>
                             {enr.status?.replace('_', ' ')}
                           </span>
+                          <button
+                            onClick={() => handleUnenroll(enr._id, enr.course_title)}
+                            disabled={unenrollMutation.isPending}
+                            className="text-xs px-2.5 py-1.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
+                            title="Unenroll from this course"
+                          >
+                            <Trash2 size={12} />
+                            Unenroll
+                          </button>
                           {lock && (
                             <button
                               onClick={() => unlockMutation.mutate({ courseId })}
