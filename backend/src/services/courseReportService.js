@@ -158,14 +158,17 @@ const renderChapters = (doc, chapters) => {
   chapters.forEach((c, idx) => {
     ensureRoom(doc, 110);
     const pendingC = !c.attemptsCount;
-    const color = pendingC ? '#6b7280' : (c.passed ? '#15803d' : '#b91c1c');
+    // Color reflects attempts given (both rounds = green, one round = red), not pass/fail.
+    const bothDone = c.attemptsCount >= 2;
+    const color = pendingC ? '#111827' : (bothDone ? '#15803d' : '#b91c1c');
+    const icon = pendingC ? '○' : (bothDone ? '✓' : '✗');
     doc.fillColor(color).font('Helvetica-Bold').fontSize(11)
-      .text(`${pendingC ? '○' : (c.passed ? '✓' : '✗')}  Chapter ${idx + 1}: ${c.lessonTitle}`, PAGE.left, doc.y, { width: PAGE.width });
+      .text(`${icon}  Chapter ${idx + 1}: ${c.lessonTitle}`, PAGE.left, doc.y, { width: PAGE.width });
     doc.moveDown(0.2);
     doc.fillColor('#374151').font('Helvetica-Bold').fontSize(9)
       .text(pendingC
         ? 'Not attempted yet'
-        : `Best round: ${c.scoreLabel}  |  Attempts: ${c.attemptsCount}  |  ${c.passed ? 'Passed' : 'Not passed'}`,
+        : `Best round: ${c.scoreLabel}  |  Attempts: ${c.attemptsCount}/2  |  ${bothDone ? 'Both attempts given' : '1 attempt given'}`,
       PAGE.left + 16, doc.y, { width: PAGE.width - 16 });
     doc.moveDown(0.3);
     if (pendingC) { doc.moveDown(0.3); return; }
