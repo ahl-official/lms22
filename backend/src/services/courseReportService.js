@@ -140,54 +140,79 @@ const buildChapterRounds = ({ lessons, rolePlayAttempts, attempts, lessonProgres
   });
 };
 
-const renderChapters = (doc, chapters) => {
+// Groups the flat per-lesson rows under their real LMS chapter (= Module), in the module's own
+// order, using the module's own title verbatim — matching what the trainee's course sidebar shows,
+// instead of renumbering 1..N off the flat lesson list.
+const groupChaptersByModule = (modules, lessons, rows) => {
+  if (!rows) return rows;
+  const rowByLesson = {};
+  lessons.forEach((l, i) => { rowByLesson[l._id.toString()] = rows[i]; });
+  return modules.map((mod) => {
+    const modId = mod._id.toString();
+    const modLessons = lessons.filter((l) => idOf(l.module_id) === modId);
+    return {
+      moduleTitle: mod.title,
+      lessons: modLessons.map((l) => rowByLesson[l._id.toString()]).filter(Boolean),
+    };
+  });
+};
+
+const renderChapters = (doc, chapterGroups) => {
   sectionTitle(doc, 'Chapter Progress & Analysis', 60);
-  const pending = chapters.map((c, i) => ({ ...c, n: i + 1 })).filter((c) => !c.attemptsCount);
-  const done = chapters.filter((c) => c.attemptsCount).length;
+  const allLessons = chapterGroups.flatMap((g) => g.lessons);
+  const done = allLessons.filter((c) => c.attemptsCount).length;
 
   doc.fillColor('#111827').font('Helvetica-Bold').fontSize(10)
-    .text(`Attempted: ${done} of ${chapters.length} chapters`, PAGE.left, doc.y, { width: PAGE.width });
-  doc.moveDown(0.3);
-  if (pending.length) {
-    ensureRoom(doc, 30);
-    doc.fillColor('#b91c1c').font('Helvetica').fontSize(9)
-      .text(`Not yet attempted: ${pending.map((c) => `Ch ${c.n}`).join(', ')}`, PAGE.left, doc.y, { width: PAGE.width });
-    doc.moveDown(0.5);
-  }
+    .text(`Attempted: ${done} of ${allLessons.length} lessons across ${chapterGroups.length} chapters`, PAGE.left, doc.y, { width: PAGE.width });
+  doc.moveDown(0.5);
 
-  chapters.forEach((c, idx) => {
-    ensureRoom(doc, 110);
-    const pendingC = !c.attemptsCount;
-    // Color reflects attempts given (both rounds = green, one round = red), not pass/fail.
-    const bothDone = c.attemptsCount >= 2;
-    const color = pendingC ? '#111827' : (bothDone ? '#15803d' : '#b91c1c');
-    const icon = pendingC ? '○' : (bothDone ? '✓' : '✗');
-    doc.fillColor(color).font('Helvetica-Bold').fontSize(11)
-      .text(`${icon}  Chapter ${idx + 1}: ${c.lessonTitle}`, PAGE.left, doc.y, { width: PAGE.width });
-    doc.moveDown(0.2);
-    doc.fillColor('#374151').font('Helvetica-Bold').fontSize(9)
-      .text(pendingC
-        ? 'Not attempted yet'
-        : `Best round: ${c.scoreLabel}  |  Attempts: ${c.attemptsCount}/2  |  ${bothDone ? 'Both attempts given' : '1 attempt given'}`,
-      PAGE.left + 16, doc.y, { width: PAGE.width - 16 });
-    doc.moveDown(0.3);
-    if (pendingC) { doc.moveDown(0.3); return; }
+  chapterGroups.forEach((group) => {
+    ensureRoom(doc, 40);
+    doc.fillColor('#1e293b').font('Helvetica-Bold').fontSize(12)
+      .text(group.moduleTitle, PAGE.left, doc.y, { width: PAGE.width });
+    doc.moveDown(0.25);
 
-    if (c.feedback) { label(doc, 'AI feedback'); body(doc, c.feedback, { size: 9 }); doc.moveDown(0.3); }
-    if (c.confidence || c.fumbling) {
-      label(doc, 'Confidence & fumbling');
-      if (c.confidence) body(doc, `  Confidence score: ${c.confidence}`, { size: 9 });
-      if (c.fumbling) body(doc, `  Fumbling: ${c.fumbling}`, { size: 9 });
-      doc.moveDown(0.3);
+    if (!group.lessons.length) {
+      body(doc, 'No lessons yet', { size: 9 });
+      doc.moveDown(0.5);
+      return;
     }
-    if (c.weakPoints.length) {
-      label(doc, 'Where they are lagging');
-      c.weakPoints.forEach((wp) => body(doc,
-        typeof wp === 'string' ? `  • ${wp}` : `  • ${wp.area_display || wp.area || 'Area'}: ${wp.tip_display || wp.tip || ''}`,
-        { size: 9 }));
+
+    group.lessons.forEach((c) => {
+      ensureRoom(doc, 110);
+      const pendingC = !c.attemptsCount;
+      // Color reflects attempts given (both rounds = green, one round = red), not pass/fail.
+      const bothDone = c.attemptsCount >= 2;
+      const color = pendingC ? '#111827' : (bothDone ? '#15803d' : '#b91c1c');
+      const icon = pendingC ? '○' : (bothDone ? '✓' : '✗');
+      doc.fillColor(color).font('Helvetica-Bold').fontSize(10)
+        .text(`${icon}  ${c.lessonTitle}`, PAGE.left + 10, doc.y, { width: PAGE.width - 10 });
+      doc.moveDown(0.2);
+      doc.fillColor('#374151').font('Helvetica-Bold').fontSize(9)
+        .text(pendingC
+          ? 'Not attempted yet'
+          : `Best round: ${c.scoreLabel}  |  Attempts: ${c.attemptsCount}/2  |  ${bothDone ? 'Both attempts given' : '1 attempt given'}`,
+        PAGE.left + 26, doc.y, { width: PAGE.width - 26 });
       doc.moveDown(0.3);
-    }
-    if (c.recommendedFocus) { label(doc, 'Recommended focus'); body(doc, c.recommendedFocus, { size: 9 }); doc.moveDown(0.3); }
+      if (pendingC) { doc.moveDown(0.2); return; }
+
+      if (c.feedback) { label(doc, 'AI feedback'); body(doc, c.feedback, { size: 9 }); doc.moveDown(0.3); }
+      if (c.confidence || c.fumbling) {
+        label(doc, 'Confidence & fumbling');
+        if (c.confidence) body(doc, `  Confidence score: ${c.confidence}`, { size: 9 });
+        if (c.fumbling) body(doc, `  Fumbling: ${c.fumbling}`, { size: 9 });
+        doc.moveDown(0.3);
+      }
+      if (c.weakPoints.length) {
+        label(doc, 'Where they are lagging');
+        c.weakPoints.forEach((wp) => body(doc,
+          typeof wp === 'string' ? `  • ${wp}` : `  • ${wp.area_display || wp.area || 'Area'}: ${wp.tip_display || wp.tip || ''}`,
+          { size: 9 }));
+        doc.moveDown(0.3);
+      }
+      if (c.recommendedFocus) { label(doc, 'Recommended focus'); body(doc, c.recommendedFocus, { size: 9 }); doc.moveDown(0.3); }
+      doc.moveDown(0.3);
+    });
     doc.moveDown(0.3);
   });
 };
@@ -388,7 +413,7 @@ const buildCourseReportData = async ({ traineeId, courseId }) => {
     lessonRows,
     assessmentRounds,
     rolePlayRounds,
-    chapterRounds,
+    chapterRounds: groupChaptersByModule(modules, lessons, chapterRounds),
   };
 };
 
@@ -771,7 +796,7 @@ const buildBulkCourseReportPdfBuffer = async ({ courseId }) => {
       lessonRows,
       assessmentRounds,
       rolePlayRounds,
-      chapterRounds,
+      chapterRounds: groupChaptersByModule(modules, lessons, chapterRounds),
     });
   }
 
